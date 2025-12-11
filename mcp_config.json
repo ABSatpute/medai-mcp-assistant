@@ -1,12 +1,12 @@
 {
   "mcpServers": {
-    "prescription-analyzer": {
-      "command": "python",
-      "args": ["mcp_servers/prescription_server.py"]
-    },
     "medical-database": {
       "command": "python",
       "args": ["mcp_servers/database_server.py"]
+    },
+    "medical-map": {
+      "command": "python",
+      "args": ["mcp_servers/map_server.py"]
     }
   }
 }

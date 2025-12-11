@@ -49,7 +49,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         limit = arguments.get("limit", 10)
         
         # DEBUG: Print received location
-        print(f"MAP SERVER DEBUG:")
+        # print(f"MAP SERVER DEBUG:")
         print(f"   Received latitude: {lat}")
         print(f"   Received longitude: {lon}")
         print(f"   Limit: {limit}")

@@ -13,10 +13,11 @@ from dotenv import load_dotenv
 import os
 import sys
 import uuid
-from chat_db import init_db, save_message, load_messages, get_all_threads, update_thread_title
+from chat_db import init_db, save_message, load_messages, get_all_threads, update_thread_title, cleanup_old_threads, delete_thread
 
 load_dotenv()
 init_db()
+cleanup_old_threads(10)  # Keep only 10 recent threads
 
 # Get absolute paths
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -56,19 +57,99 @@ if not st.session_state.messages:
     st.session_state.messages = load_messages(st.session_state.current_thread_id)
 
 # Utility functions
+def analyze_user_intent(query, prescription_medicines=None):
+    """Analyze user intent using NLP instead of keyword matching"""
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+    
+    context = ""
+    if prescription_medicines:
+        context = f"User has prescription with medicines: {', '.join(prescription_medicines)}. "
+    
+    prompt = f"""{context}Analyze this user query and return the intent as JSON:
+
+User query: "{query}"
+
+Return JSON with:
+{{
+  "intent": "availability|store_location|price|medicine_info|general",
+  "confidence": 0.9,
+  "entities": ["medicine_name1", "medicine_name2"],
+  "action_needed": "check_availability|find_stores|get_price|provide_info|general_response"
+}}
+
+Examples:
+- "Is this available?" → {{"intent": "availability", "action_needed": "check_availability"}}
+- "Where can I buy this?" → {{"intent": "store_location", "action_needed": "find_stores"}}
+- "How much does it cost?" → {{"intent": "price", "action_needed": "get_price"}}
+- "What is paracetamol?" → {{"intent": "medicine_info", "action_needed": "provide_info", "entities": ["paracetamol"]}}
+
+Return only JSON, no other text."""
+    
+    try:
+        response = llm.invoke([HumanMessage(content=prompt)])
+        content = response.content.strip()
+        
+        if content.startswith('```json'):
+            content = content.replace('```json', '').replace('```', '').strip()
+        elif content.startswith('```'):
+            content = content.replace('```', '').strip()
+            
+        return json.loads(content)
+    except:
+        return {"intent": "general", "confidence": 0.5, "action_needed": "general_response"}
+
+def analyze_prescription_image(image_base64):
+    """Direct prescription analysis using main LLM"""
+    llm = ChatOpenAI(model="gpt-4o", temperature=0)
+    
+    messages = [
+        HumanMessage(content=[
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{image_base64}"}},
+            {"type": "text", "text": """Analyze this prescription image and extract all visible information. Return ONLY a JSON object with this structure:
+{
+  "medicines": ["medicine name 1", "medicine name 2"],
+  "doctor_info": "Doctor name and details",
+  "instructions": "Dosage and instructions",
+  "patient_info": "Patient details if visible"
+}
+
+Return only the JSON, no other text."""}
+        ])
+    ]
+    
+    try:
+        response = llm.invoke(messages)
+        content = response.content.strip()
+        
+        # Try to extract JSON from response
+        if content.startswith('```json'):
+            content = content.replace('```json', '').replace('```', '').strip()
+        elif content.startswith('```'):
+            content = content.replace('```', '').strip()
+            
+        return json.loads(content)
+    except Exception as e:
+        return {"medicines": [], "error": f"Analysis failed: {str(e)}", "raw_response": response.content if 'response' in locals() else "No response"}
+
 def generate_title(messages):
-    if len(messages) < 3:
-        return messages[0]['content'][:50] if messages else "New Chat"
+    if len(messages) < 1:
+        return "New Chat"
+    
+    # Always use AI to generate title from first user message
+    first_user_msg = next((m['content'] for m in messages if m['role'] == 'user'), "New Chat")
     
     llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-    last_three = [m['content'] for m in messages[-3:]]
-    prompt = f"Generate a short 5-word title:\n{' | '.join(last_three)}"
+    prompt = f"Generate a short 5-word title for this medical query:\n{first_user_msg}"
     
     try:
         response = llm.invoke([HumanMessage(content=prompt)])
         return response.content[:60]
     except:
-        return messages[0]['content'][:50]
+        # Fallback to smart truncation at word boundary
+        words = first_user_msg.split()
+        if len(words) <= 6:
+            return first_user_msg
+        return " ".join(words[:6]) + "..."
 
 def new_chat():
     st.session_state.current_thread_id = str(uuid.uuid4())
@@ -100,147 +181,91 @@ async def get_mcp_tools():
     
     return tools
 
-async def call_mcp_tool(tool_name: str, arguments: dict):
+async def call_mcp_tool(server_name: str, tool_name: str, arguments: dict):
     """Call MCP tool on appropriate server"""
-    servers = [
-        os.path.join(BASE_DIR, "mcp_servers/database_server.py"),
-        os.path.join(BASE_DIR, "mcp_servers/map_server.py"),
-        os.path.join(BASE_DIR, "mcp_servers/prescription_server.py")
-    ]
+    server_map = {
+        "medical-database": "database_server.py",
+        "medical-map": "map_server.py"
+    }
     
-    for server_path in servers:
-        params = StdioServerParameters(command=PYTHON_PATH, args=[server_path])
-        try:
-            async with stdio_client(params) as (read, write):
-                async with ClientSession(read, write) as session:
-                    await session.initialize()
-                    
-                    # Check if this server has the tool
-                    tools_response = await session.list_tools()
-                    tool_names = [t.name for t in tools_response.tools]
-                    
-                    if tool_name not in tool_names:
-                        continue
-                    
-                    # Call the tool
-                    result = await session.call_tool(tool_name, arguments)
-                    
-                    if result and result.content:
-                        return result.content[0].text
-                    else:
-                        return f"Tool returned empty result"
-        except Exception as e:
-            print(f"Error on {server_path}: {e}")
-            continue
+    if server_name not in server_map:
+        return f"Error: Unknown server '{server_name}'"
     
-    return "Error: Tool not found"
+    server_path = os.path.join(BASE_DIR, "mcp_servers", server_map[server_name])
+    params = StdioServerParameters(command=PYTHON_PATH, args=[server_path])
+    
+    try:
+        async with stdio_client(params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                
+                # Check if this server has the tool
+                tools_response = await session.list_tools()
+                tool_names = [t.name for t in tools_response.tools]
+                
+                if tool_name not in tool_names:
+                    return f"Error: Tool '{tool_name}' not found on server '{server_name}'"
+                
+                # Call the tool
+                result = await session.call_tool(tool_name, arguments)
+                
+                if result and result.content:
+                    return result.content[0].text
+                else:
+                    return f"Tool returned empty result"
+    except Exception as e:
+        return f"Error calling tool: {str(e)}"
 
 async def process_query(query: str, image_base64: str = None, conversation_history: list = None, user_location: dict = None):
-    """Process user query with MCP tools"""
+    """Process user query as medical store expert"""
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
     
-    # Default location if not provided
-    if not user_location:
-        user_location = {"latitude": 18.566039, "longitude": 73.766370}
-    
-    # Get available tools
-    tools = await get_mcp_tools()
-    
-    # Build tool descriptions
-    tool_info = []
-    for t in tools:
-        schema = json.dumps(t.inputSchema, indent=2)
-        tool_info.append(f"Tool: {t.name}\nDescription: {t.description}\nSchema: {schema}")
+    # Check if we have prescription data in session
+    prescription_context = ""
+    if hasattr(st.session_state, 'prescription_data') and st.session_state.prescription_data:
+        medicines = st.session_state.prescription_data.get("medicines", [])
+        if medicines:
+            prescription_context = f"User has uploaded prescription with medicines: {', '.join(medicines)}. "
     
     # Build conversation context
     context = ""
     if conversation_history:
-        recent = conversation_history[-4:]
-        context = "\n".join([f"{m['role']}: {m['content'][:200]}" for m in recent])
+        recent_context = conversation_history[-3:] if len(conversation_history) > 3 else conversation_history
+        context = "\n".join([f"{msg['role']}: {msg['content'][:100]}..." for msg in recent_context])
     
-    # Create different system prompts based on input type
-    if image_base64 and query == "Analyze this prescription image":
-        # Image-only prompt
-        system_prompt = f"""You are MedAI, a medical assistant with access to these tools:
+    system_prompt = f"""You are MedAI, a medical store expert. {prescription_context}
 
-{chr(10).join(tool_info)}
+You have access to these tools:
+- execute_sql: Query medical database for medicine availability, prices, stock
+- get_nearby_stores: Find nearby medical stores with coordinates and map display
 
-The user uploaded a prescription image. Extract all prescription data using extract_prescription_data tool.
+DECISION RULES:
+- Location queries → get_nearby_stores
+- Medicine queries → execute_sql  
+- General info → direct answer
 
-Response format:
-{{"use_tool": true, "tool": "extract_prescription_data", "arguments": {{"image_base64": "..."}}}}"""
-    
-    elif image_base64 and query != "Analyze this prescription image":
-        # Image + custom text prompt
-        system_prompt = f"""You are MedAI, a medical assistant with access to these tools:
+Context: {context}
 
-{chr(10).join(tool_info)}
+EXAMPLES:
+User: "Give me nearby stores" → {{"use_tool": true, "tool": "get_nearby_stores", "arguments": {{"latitude": 18.566039, "longitude": 73.766370, "limit": 5}}}}
 
-The user uploaded a prescription image AND asked: "{query}"
+User: "Find nearest pharmacy" → {{"use_tool": true, "tool": "get_nearby_stores", "arguments": {{"latitude": 18.566039, "longitude": 73.766370, "limit": 5}}}}
 
-CRITICAL RULES:
-- If query mentions "availability", "check", "find": do multi-step (extract_prescription_data → execute_sql)
-- If query mentions "near me", "nearby": do multi-step (extract_prescription_data → get_nearby_stores → execute_sql)
-- Otherwise: just extract prescription data
+User: "Where can I buy medicines?" → {{"use_tool": true, "tool": "get_nearby_stores", "arguments": {{"latitude": 18.566039, "longitude": 73.766370, "limit": 10}}}}
 
-Multi-step format:
-{{"use_tool": true, "steps": [{{"tool": "extract_prescription_data", "arguments": {{"image_base64": "..."}}}}, {{"tool": "execute_sql", "arguments": {{"sql_query": "..."}}}}]}}
+User: "Show me store locations" → {{"use_tool": true, "tool": "get_nearby_stores", "arguments": {{"latitude": 18.566039, "longitude": 73.766370, "limit": 5}}}}
 
-Single tool format:
-{{"use_tool": true, "tool": "extract_prescription_data", "arguments": {{"image_base64": "..."}}}}"""
-    
-    else:
-        # Text-only prompt (original)
-        system_prompt = f"""You are MedAI, a medical assistant with access to these tools:
+User: "Pharmacies near me" → {{"use_tool": true, "tool": "get_nearby_stores", "arguments": {{"latitude": 18.566039, "longitude": 73.766370, "limit": 5}}}}
 
-{chr(10).join(tool_info)}
+User: "Is Dolo available?" → {{"use_tool": true, "tool": "execute_sql", "arguments": {{"sql_query": "SELECT m.medicine_name, m.price, ms.store_name, ss.stock_quantity FROM medicines m JOIN store_stock ss ON m.medicine_id = ss.medicine_id JOIN medical_stores ms ON ss.store_id = ms.store_id WHERE m.medicine_name LIKE '%Dolo%' AND ss.stock_quantity > 0"}}}}
 
-CRITICAL RULES:
-- For ANY query with "near me", "nearby", "closest", "nearest": MUST use get_nearby_stores tool
-- For "find stores": use get_nearby_stores (NOT execute_sql)
-- For medicine availability at specific stores: use execute_sql
-- For price queries: use execute_sql
-- For prescription images WITHOUT availability request: use extract_prescription_data only
-- For prescription images WITH availability request ("check availability", "find medicines", "availability"): do multi-step
-- When user uploads image: automatically use extract_prescription_data even if not explicitly requested
+User: "Price of paracetamol?" → {{"use_tool": true, "tool": "execute_sql", "arguments": {{"sql_query": "SELECT medicine_name, price FROM medicines WHERE medicine_name LIKE '%paracetamol%'"}}}}
 
-MULTI-STEP QUERY PATTERNS:
-1. "nearest store(s)" queries: ALWAYS use get_nearby_stores first, then execute_sql with store_id filter
-2. "compare prices at nearest stores": 
-   - Step 1: get_nearby_stores(limit=N)
-   - Step 2: execute_sql with WHERE ms.store_id IN (store_ids_from_step1)
-3. Prescription analysis ONLY (image without availability request):
-   - Single step: extract_prescription_data(image_base64)
-4. Prescription availability check (image + "availability"/"check"/"find" in query):
-   - Step 1: extract_prescription_data(image_base64)
-   - Step 2: execute_sql to check medicine availability using extracted medicine names
-5. Prescription + nearby availability (image + "near me"/"nearby"):
-   - Step 1: extract_prescription_data(image_base64)
-   - Step 2: get_nearby_stores(limit=5)
-   - Step 3: execute_sql with store filter for medicine availability
+User: "Do you have aspirin?" → {{"use_tool": true, "tool": "execute_sql", "arguments": {{"sql_query": "SELECT m.medicine_name, ms.store_name, ss.stock_quantity FROM medicines m JOIN store_stock ss ON m.medicine_id = ss.medicine_id JOIN medical_stores ms ON ss.store_id = ms.store_id WHERE m.medicine_name LIKE '%aspirin%' AND ss.stock_quantity > 0"}}}}
 
-SQL Rules:
-- For "available" or "in stock": add "AND ss.stock_quantity > 0"
-- Use LIKE '%%term%%' for text searches
-- For counts: SELECT COUNT(*) as count FROM ...
-- NEVER use LIMIT inside subqueries
-- For nearest stores, use get_nearby_stores tool, NOT distance calculation in SQL
+User: "What is paracetamol used for?" → {{"use_tool": false, "answer": "Paracetamol is used for pain relief and fever reduction."}}
 
-Conversation context:
-{context}
-
-Response format for single tool:
-{{"use_tool": true, "tool": "tool_name", "arguments": {{...}}}}
-
-Response format for multi-step (use when query mentions "nearest" + other criteria):
-{{"use_tool": true, "steps": [{{"tool": "get_nearby_stores", "arguments": {{"limit": N}}}}, {{"tool": "execute_sql", "arguments": {{"sql_query": "..."}}}}]}}
-
-For direct answers:
-{{"use_tool": false, "answer": "your response"}}"""
-    
-    # Add image context if present
-    if image_base64:
-        query += "\n[User uploaded a prescription image]"
+Return ONLY JSON, no markdown, no explanation."""
     
     messages = [
         SystemMessage(content=system_prompt),
@@ -248,111 +273,86 @@ For direct answers:
     ]
     
     response = llm.invoke(messages)
-    content = response.content.strip()
-    
-    # Extract JSON
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0].strip()
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0].strip()
-    
-    match = re.search(r'\{.*\}', content, re.DOTALL)
-    if match:
-        content = match.group()
     
     try:
-        decision = json.loads(content)
+        content = response.content.strip()
         
-        print(f"DEBUG: LLM Decision: {decision}")
-        print(f"DEBUG: Has image: {image_base64 is not None}")
-        print(f"DEBUG: Query: {query}")
+        # Clean up JSON response
+        if content.startswith('```json'):
+            content = content.replace('```json', '').replace('```', '').strip()
+        elif content.startswith('```'):
+            content = content.replace('```', '').strip()
+        
+        # Extract JSON if wrapped in text
+        import re
+        json_match = re.search(r'\{.*\}', content, re.DOTALL)
+        if json_match:
+            content = json_match.group()
+        
+        print(f"DEBUG: Raw LLM response: {response.content}")
+        print(f"DEBUG: Cleaned content: {content}")
+        
+        decision = json.loads(content)
+        print(f"DEBUG: Parsed decision: {decision}")
+        
+        # Show SQL query for verification
+        if decision.get("use_tool") and decision.get("tool") == "execute_sql":
+            sql_query = decision["arguments"].get("sql_query", "")
+            print(f"🔍 GENERATED SQL: {sql_query}")
         
         if decision.get("use_tool"):
-            # Use the location passed as parameter
-            location = user_location
+            tool_name = decision["tool"]
+            arguments = decision["arguments"]
             
-            # DEBUG: Print which tool is being used
-            if "steps" in decision:
-                print(f"DEBUG: Multi-step execution")
-                for i, step in enumerate(decision["steps"]):
-                    print(f"  Step {i+1}: {step['tool']}")
+            print(f"DEBUG: Calling tool: {tool_name} with args: {arguments}")
+            
+            # Determine server
+            if tool_name == "get_nearby_stores":
+                server_name = "medical-map"
+                if user_location:
+                    arguments.setdefault("latitude", user_location["latitude"])
+                    arguments.setdefault("longitude", user_location["longitude"])
             else:
-                print(f"DEBUG: Single tool execution: {decision.get('tool')}")
-                print(f"DEBUG: User location being passed: {location}")
+                server_name = "medical-database"
             
-            # Handle multi-step execution
-            if "steps" in decision:
-                results = []
-                store_ids = []
-                
-                for i, step in enumerate(decision["steps"]):
-                    # Add location for map tools
-                    if step["tool"] == "get_nearby_stores":
-                        step["arguments"]["latitude"] = location["latitude"]
-                        step["arguments"]["longitude"] = location["longitude"]
-                    
-                    # Add image if needed
-                    if step["tool"] == "extract_prescription_data" and image_base64:
-                        step["arguments"]["image_base64"] = image_base64
-                    elif image_base64 and "image_base64" in str(step.get("arguments", {})):
-                        step["arguments"]["image_base64"] = image_base64
-                    
-                    # If this is step 2 and we have store IDs from step 1, inject them
-                    if i > 0 and store_ids and step["tool"] == "execute_sql":
-                        sql = step["arguments"]["sql_query"]
-                        ids_str = ",".join(map(str, store_ids))
-                        if "WHERE" in sql.upper():
-                            sql = sql.replace("WHERE", f"WHERE ms.store_id IN ({ids_str}) AND")
-                        else:
-                            sql += f" WHERE ms.store_id IN ({ids_str})"
-                        step["arguments"]["sql_query"] = sql
-                    
-                    result = await call_mcp_tool(step["tool"], step["arguments"])
-                    results.append(result)
-                    
-                    # Extract store IDs from map tool result
-                    if step["tool"] == "get_nearby_stores":
-                        try:
-                            store_data = json.loads(result)
-                            store_ids = [s.get("store_id") for s in store_data if "store_id" in s]
-                        except:
-                            pass
-                
-                # Return the final result
-                return results[-1]
+            result = await call_mcp_tool(server_name, tool_name, arguments)
             
-            # Single tool execution
-            if decision["tool"] == "extract_prescription_data" and image_base64:
-                decision["arguments"]["image_base64"] = image_base64
-            elif image_base64 and "image_base64" in str(decision.get("arguments", {})):
-                decision["arguments"]["image_base64"] = image_base64
+            # Check if this is map server result for map display
+            if tool_name == "get_nearby_stores":
+                try:
+                    data = json.loads(result)
+                    if isinstance(data, list) and len(data) > 0 and 'latitude' in data[0]:
+                        st.session_state.last_stores = data
+                        st.session_state.show_map = True
+                        st.info("📍 Map displayed below.")
+                except:
+                    pass
             
-            if decision["tool"] == "get_nearby_stores":
-                decision["arguments"]["latitude"] = location["latitude"]
-                decision["arguments"]["longitude"] = location["longitude"]
+            # Let LLM format the response intelligently
+            format_prompt = f"""User asked: "{query}"
+Database result: {result}
+
+As a medical store expert, provide a natural, helpful response based on the user's question and the database results. Don't just show raw data - explain it conversationally."""
+
+            format_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+            formatted_response = format_llm.invoke([HumanMessage(content=format_prompt)])
             
-            result = await call_mcp_tool(decision["tool"], decision["arguments"])
-            
-            # Check if it's a count result
-            try:
-                data = json.loads(result)
-                if isinstance(data, list) and len(data) == 1 and isinstance(data[0], dict):
-                    keys = list(data[0].keys())
-                    if len(keys) <= 2 and any(k in ['count', 'total', 'sum', 'avg', 'max', 'min'] for k in [k.lower() for k in keys]):
-                        value = list(data[0].values())[0]
-                        return f"There are **{value}** results matching your query."
-            except:
-                pass
-            
-            return result
+            return formatted_response.content
         else:
-            return decision.get("answer", content)
-    except:
-        return content
+            return decision.get("answer", response.content)
+            
+    except json.JSONDecodeError:
+        return response.content
 
 # UI
 st.title("🏥 MedAI - MCP Agent")
 st.caption("Production-ready medical AI with MCP tools")
+
+# Show current chat title
+threads = get_all_threads()
+current_thread = next((t for t in threads if t[0] == st.session_state.current_thread_id), None)
+current_title = current_thread[1] if current_thread else "New Chat"
+st.subheader(f"💬 {current_title}")
 
 # Sidebar
 with st.sidebar:
@@ -368,16 +368,25 @@ with st.sidebar:
     threads = get_all_threads()
     if threads:
         st.subheader("Previous Chats")
+        
         for thread_id, title, _ in threads:
             is_current = thread_id == st.session_state.current_thread_id
             
-            if st.button(
-                f"{'🟢 ' if is_current else ''}{title}", 
-                key=f"thread_{thread_id}",
-                use_container_width=True
-            ):
-                load_chat(thread_id)
-                st.rerun()
+            col1, col2 = st.columns([4, 1])
+            with col1:
+                if st.button(
+                    f"{'🟢 ' if is_current else ''}{title}", 
+                    key=f"thread_{thread_id}",
+                    use_container_width=True
+                ):
+                    load_chat(thread_id)
+                    st.rerun()
+            with col2:
+                if st.button("🗑️", key=f"del_{thread_id}", help="Delete chat"):
+                    delete_thread(thread_id)
+                    if is_current:  # If deleting current chat, start new one
+                        new_chat()
+                    st.rerun()
     
     st.divider()
     
@@ -443,30 +452,38 @@ with st.expander("📍 Your Location", expanded=not st.session_state.location_de
                 </script>
             """, height=0)
 
-# File upload above chat input
-uploaded_file = st.file_uploader("📎 Upload prescription image", type=["png","jpg","jpeg"])
+# File upload above chat input  
+if 'file_uploader_key' not in st.session_state:
+    st.session_state.file_uploader_key = 0
+
+uploaded_file = st.file_uploader("📎 Upload prescription image", type=["png","jpg","jpeg"], key=f"uploader_{st.session_state.file_uploader_key}")
 
 # Chat input at bottom
 user_input = st.chat_input("Ask me anything about health, medicines, or upload a prescription...")
 
-if user_input or uploaded_file:
+if user_input:
+    # Only process when user actually submits a question
     # Hide map when new query is asked
     st.session_state.show_map = False
     
-    # Handle image-only upload
-    if uploaded_file and not user_input:
-        user_input = "Analyze this prescription image"
+    # Intelligent message handling  
+    if uploaded_file:
+        display_message = f"📷 {user_input}"
+        processing_query = f"I uploaded a prescription image and want to: {user_input}"
+    else:
+        display_message = user_input
+        processing_query = user_input
     
     # Save user message to database
     location = st.session_state.user_location
-    save_message(st.session_state.current_thread_id, 'user', user_input, location)
+    save_message(st.session_state.current_thread_id, 'user', display_message, location)
     
     # Add to session state
-    user_msg = {'role': 'user', 'content': user_input, 'location': location}
+    user_msg = {'role': 'user', 'content': display_message, 'location': location}
     st.session_state.messages.append(user_msg)
     
     with st.chat_message('user'):
-        st.markdown(user_input)
+        st.markdown(display_message)
     
     # Process with MCP
     with st.chat_message("assistant"):
@@ -476,12 +493,50 @@ if user_input or uploaded_file:
                 image_bytes = uploaded_file.read()
                 image_base64 = base64.b64encode(image_bytes).decode()
             
-            response = asyncio.run(process_query(
-                user_input, 
-                image_base64, 
-                st.session_state.messages,
-                st.session_state.user_location
-            ))
+            # Handle image analysis
+            if image_base64:
+                st.info("🔍 Analyzing prescription image...")
+                prescription_data = analyze_prescription_image(image_base64)
+                
+                if prescription_data.get("medicines"):
+                    # Store prescription data for future queries
+                    st.session_state.prescription_data = prescription_data
+                    
+                    medicines = prescription_data["medicines"]
+                    medicine_list = ", ".join(medicines)
+                    
+                    # Enhanced query with prescription context
+                    enhanced_query = f"""PRESCRIPTION CONTEXT: Found medicines: {medicine_list}
+USER REQUEST: {processing_query}
+Respond as medical expert based on user intent."""
+                    
+                    response = asyncio.run(process_query(
+                        enhanced_query,
+                        None,
+                        st.session_state.messages,
+                        st.session_state.user_location
+                    ))
+                else:
+                    response = "I couldn't identify medicines in this image. Please upload a clearer prescription or tell me the medicine names."
+            else:
+                # Intelligent text query processing
+                enhanced_text_query = processing_query
+                
+                # Add prescription context if available
+                if hasattr(st.session_state, 'prescription_data') and st.session_state.prescription_data:
+                    medicines = st.session_state.prescription_data.get("medicines", [])
+                    if medicines:
+                        medicine_list = ", ".join(medicines)
+                        enhanced_text_query = f"""CONTEXT: User previously uploaded prescription with: {medicine_list}
+CURRENT QUERY: {processing_query}
+Respond as medical expert considering both prescription context and current question."""
+                
+                response = asyncio.run(process_query(
+                    enhanced_text_query, 
+                    None, 
+                    st.session_state.messages,
+                    st.session_state.user_location
+                ))
         
         # Try to parse as JSON for table display
         try:
@@ -566,11 +621,16 @@ if user_input or uploaded_file:
             save_message(st.session_state.current_thread_id, 'assistant', response)
             st.session_state.messages.append({'role': 'assistant', 'content': response})
     
-    # Auto-generate title after 3 messages
-    if len(st.session_state.messages) >= 3:
+    # Clear uploaded file after processing (just the upload box, keep chat data)
+    if uploaded_file:
+        st.session_state.file_uploader_key += 1
+        st.rerun()
+    
+    # Auto-generate title after 1 message (immediate AI title)
+    if len(st.session_state.messages) >= 1:
         threads = get_all_threads()
         current_thread = next((t for t in threads if t[0] == st.session_state.current_thread_id), None)
-        if current_thread and current_thread[1] == "Untitled Chat":
+        if current_thread and (current_thread[1] == "New Chat" or "..." in current_thread[1]):
             title = generate_title(st.session_state.messages)
             update_thread_title(st.session_state.current_thread_id, title)
 
