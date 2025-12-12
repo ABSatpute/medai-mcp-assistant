@@ -654,6 +654,9 @@
                 return;
             }
             
+            // Debug: Show what we're searching for
+            console.log('🔍 Searching for medicines:', medicines);
+            
             // Show loading
             document.getElementById('searchResults').innerHTML = '<div style="text-align: center; padding: 20px; color: #64748b;">🔍 Searching medicines...</div>';
             
@@ -661,6 +664,9 @@
             socket.emit('search_medicines', {
                 medicines: medicines
             });
+            
+            // Debug: Confirm request sent
+            console.log('📡 Search request sent to backend');
         }
         
         // Store Locator popup functions
@@ -979,6 +985,84 @@
                     `;
                 }
                 window.waitingForPopupMap = false;
+            }
+        });
+        
+        socket.on('medicine_search_result', (data) => {
+            console.log('💊 Medicine search result received:', data);
+            console.log('💊 Results array:', data.results);
+            console.log('💊 First result:', data.results ? data.results[0] : 'No results');
+            
+            const resultsDiv = document.getElementById('searchResults');
+            if (!resultsDiv) return;
+            
+            if (data.error) {
+                resultsDiv.innerHTML = `<div style="color: red; padding: 20px;">❌ Error: ${data.error}</div>`;
+                return;
+            }
+            
+            if (data.success && data.results) {
+                if (data.results.length === 0) {
+                    resultsDiv.innerHTML = '<div style="padding: 20px; color: #64748b;">No medicines found</div>';
+                } else {
+                    let html = '<div style="padding: 20px;"><h4>Search Results:</h4>';
+                    data.results.forEach((result, index) => {
+                        console.log(`💊 Result ${index}:`, result);
+                        html += `
+                            <div style="border: 1px solid #e5e7eb; padding: 10px; margin: 5px 0; border-radius: 5px;">
+                                <strong>${result[0] || result.medicine_name || 'Unknown'}</strong><br>
+                                Price: ₹${result[1] || result.price || 'N/A'}<br>
+                                Store: ${result[2] || result.store_name || 'Unknown'}<br>
+                                Stock: ${result[3] || result.stock_quantity || 'N/A'} units
+                            </div>
+                        `;
+                    });
+                    html += '</div>';
+                    resultsDiv.innerHTML = html;
+                }
+            }
+        });
+        
+        socket.on('prescription_analysis_result', (data) => {
+            console.log('📋 Prescription analysis result received:', data);
+            console.log('📋 Data structure:', JSON.stringify(data, null, 2));
+            console.log('📋 Medicines found:', data.data ? data.data.medicines : 'No data.medicines');
+            
+            const extractedSection = document.getElementById('extractedMedicines');
+            const medicinesList = document.getElementById('medicinesList');
+            
+            if (!extractedSection || !medicinesList) {
+                console.log('📋 ERROR: Could not find extractedMedicines or medicinesList elements');
+                return;
+            }
+            
+            if (data.error) {
+                medicinesList.innerHTML = `<div style="color: red;">❌ Error: ${data.error}</div>`;
+                extractedSection.style.display = 'block';
+                return;
+            }
+            
+            if (data.success && data.data) {
+                const medicines = data.data.medicines || [];
+                console.log('📋 Processing medicines array:', medicines);
+                
+                if (medicines.length === 0) {
+                    medicinesList.innerHTML = '<div style="color: #64748b;">No medicines detected in image</div>';
+                } else {
+                    let html = '<div>Found medicines:</div>';
+                    medicines.forEach((medicine, index) => {
+                        html += `
+                            <label style="display: block; margin: 5px 0;">
+                                <input type="checkbox" class="medicine-item" value="${medicine}" checked style="margin-right: 8px;">
+                                ${medicine}
+                            </label>
+                        `;
+                    });
+                    medicinesList.innerHTML = html;
+                }
+                
+                extractedSection.style.display = 'block';
+                console.log('📋 Extracted medicines section should now be visible');
             }
         });
         

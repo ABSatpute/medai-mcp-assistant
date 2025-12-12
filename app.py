@@ -287,6 +287,77 @@ def api_delete_thread(thread_id):
 # -------------------------
 # SocketIO message handler
 # -------------------------
+@socketio.on("analyze_prescription")
+def handle_analyze_prescription(data):
+    """Handle prescription image analysis from Find Medicines popup"""
+    try:
+        image_data = data.get("image", "")
+        print(f"🔍 DEBUG - Received prescription analysis request")
+        
+        if not image_data:
+            emit("prescription_analysis_result", {"error": "No image provided"})
+            return
+        
+        # Extract base64 data
+        if "base64," in image_data:
+            image_base64 = image_data.split("base64,")[1]
+        else:
+            image_base64 = image_data
+        
+        # Use existing MCP prescription server
+        result = asyncio.run(call_mcp_tool("prescription-server", "extract_prescription_data", {
+            "image_base64": image_base64
+        }))
+        
+        print(f"🔍 DEBUG - Prescription analysis result: {result}")
+        
+        if result:
+            try:
+                # Try to parse as JSON
+                prescription_data = json.loads(result)
+                emit("prescription_analysis_result", {"success": True, "data": prescription_data})
+            except:
+                # If not JSON, treat as text
+                emit("prescription_analysis_result", {"success": True, "data": {"medicines": [], "text": result}})
+        else:
+            emit("prescription_analysis_result", {"error": "No analysis result"})
+        
+    except Exception as e:
+        print(f"❌ ERROR in analyze_prescription: {str(e)}")
+        emit("prescription_analysis_result", {"error": str(e)})
+
+@socketio.on("search_medicines")
+def handle_search_medicines(data):
+    """Handle medicine search from Find Medicines popup"""
+    try:
+        medicines = data.get("medicines", [])
+        print(f"🔍 DEBUG - Received medicine search request: {medicines}")
+        
+        if not medicines:
+            emit("medicine_search_result", {"error": "No medicines provided"})
+            return
+        
+        # Search for each medicine in database
+        results = []
+        for medicine in medicines:
+            # Use existing MCP system to search
+            result = asyncio.run(call_mcp_tool("medical-database", "execute_sql", {
+                "sql_query": f"SELECT m.medicine_name, m.price, ms.store_name, ss.stock_quantity FROM medicines m JOIN store_stock ss ON m.medicine_id = ss.medicine_id JOIN medical_stores ms ON ss.store_id = ms.store_id WHERE m.medicine_name LIKE '%{medicine}%' AND ss.stock_quantity > 0 LIMIT 5"
+            }))
+            
+            print(f"🔍 DEBUG - Database result for {medicine}: {result}")
+            
+            if result and result.startswith('['):
+                medicine_data = json.loads(result)
+                results.extend(medicine_data)
+        
+        # Send results back to popup
+        emit("medicine_search_result", {"success": True, "results": results})
+        
+    except Exception as e:
+        print(f"❌ ERROR in search_medicines: {str(e)}")
+        emit("medicine_search_result", {"error": str(e)})
+
 @socketio.on("send_message")
 def handle_message(data):
     """
