@@ -15,23 +15,92 @@
 
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            background: white;
+            margin: 0;
+            padding: 0;
+            height: 100vh;
+            overflow: hidden;
         }
 
         .app-container {
-            width: 95%;
-            max-width: 1200px;
-            height: 90vh;
+            width: 100%;
+            height: 100vh;
             background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.1);
-            display: grid;
-            grid-template-columns: 300px 1fr;
-            overflow: hidden;
+            display: flex;
+            position: relative;
+        }
+
+        .sidebar {
+            width: 300px;
+            background: #f8fafc;
+            border-right: 1px solid #e2e8f0;
+            display: flex;
+            flex-direction: column;
+            transition: margin-left 0.3s ease;
+            position: relative;
+        }
+
+        .sidebar.collapsed {
+            margin-left: -300px;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: white;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .expand-btn {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            background: #2563eb;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            padding: 10px 14px;
+            cursor: pointer;
+            font-size: 16px;
+            z-index: 1000;
+            display: none;
+        }
+
+        .chat-header {
+            padding: 20px 30px 20px 70px;
+            border-bottom: 1px solid #e2e8f0;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+            border-radius: 8px;
+            padding: 10px 12px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        }
+
+        .sidebar-toggle:hover {
+            background: #1d4ed8;
+            transform: scale(1.05);
+        }
+
+        .app-container.sidebar-collapsed .sidebar-toggle {
+            left: 20px;
         }
 
         .sidebar {
@@ -39,12 +108,20 @@
             border-right: 1px solid #e2e8f0;
             display: flex;
             flex-direction: column;
+            overflow: hidden;
+        }
+
+        .app-container.sidebar-collapsed .sidebar {
+            width: 0;
+            min-width: 0;
+            overflow: hidden;
         }
 
         .sidebar-header {
             padding: 30px 20px;
             text-align: center;
             border-bottom: 1px solid #e2e8f0;
+            position: relative;
         }
 
         .logo {
@@ -93,7 +170,7 @@
         }
 
         .chat-header {
-            padding: 20px 30px;
+            padding: 20px 30px 20px 70px !important;
             border-bottom: 1px solid #e2e8f0;
             display: flex;
             align-items: center;
@@ -106,13 +183,20 @@
             color: #1e293b;
         }
 
-        .sidebar-toggle {
-            display: none;
-            background: none;
+        .chat-header .sidebar-toggle {
+            background: #2563eb;
+            color: white;
             border: none;
-            font-size: 20px;
+            border-radius: 5px;
+            padding: 8px 12px;
             cursor: pointer;
-            color: #64748b;
+            font-size: 16px;
+            margin-right: 15px;
+        }
+
+        .chat-header .sidebar-toggle:hover {
+            background: #1d4ed8;
+        }
         }
 
         .chat-area {
@@ -124,10 +208,11 @@
 
         .messages-container {
             flex: 1;
-            padding: 30px;
+            padding: 20px 30px 120px 30px;
             overflow-y: auto;
             display: flex;
             flex-direction: column;
+            max-height: calc(100vh - 200px);
         }
 
         .welcome-section {
@@ -241,9 +326,14 @@
         }
 
         .input-area {
+            position: fixed;
+            bottom: 0;
+            left: 300px;
+            right: 0;
             padding: 20px 30px;
             border-top: 1px solid #e2e8f0;
             background: #f8fafc;
+            z-index: 100;
         }
 
         .input-container {
@@ -345,15 +435,23 @@
     </style>
 </head>
 <body>
+    <!-- Expand button (shows when sidebar is collapsed) -->
+    <button id="expandBtn" onclick="toggleSidebar()" class="expand-btn">
+        <i class="fas fa-bars"></i>
+    </button>
+    
     <div class="app-container">
         <!-- Sidebar -->
         <div class="sidebar" id="sidebar">
             <div class="sidebar-header">
+                <button onclick="toggleSidebar()" class="sidebar-toggle">
+                    <i class="fas fa-times"></i>
+                </button>
                 <div class="logo">
                     <i class="fas fa-stethoscope"></i>
                     MedAI
                 </div>
-                <div class="tagline">Your Medical Assistant</div>
+                <div class="tagline">Medical Assistant with MCP</div>
             </div>
             
             <button class="new-chat-btn" onclick="newChat()">
@@ -361,16 +459,28 @@
             </button>
             
             <div class="chat-threads" id="chatThreads">
-                <!-- Chat threads will be loaded here -->
+                <h3 style="margin: 15px 20px 10px; color: #374151; font-size: 16px;">💬 Chat Sessions</h3>
+                <div id="threadsList" style="padding: 0 20px;">
+                    <!-- Threads will be loaded here -->
+                </div>
+            </div>
+
+            <!-- About Section -->
+            <div style="margin-top: auto; padding: 20px; border-top: 1px solid #e2e8f0; background: #f9fafb;">
+                <h4 style="margin-bottom: 10px; color: #374151; font-size: 14px;">ℹ️ About</h4>
+                <div style="font-size: 12px; color: #6b7280; line-height: 1.5;">
+                    <div>💊 Prescription analysis</div>
+                    <div>🔍 Medicine search</div>
+                    <div>💰 Price comparison</div>
+                    <div>🏪 Store locator</div>
+                    <div>💬 Medical Q&A</div>
+                </div>
             </div>
         </div>
 
         <!-- Main Content -->
         <div class="main-content">
             <div class="chat-header">
-                <button class="sidebar-toggle" onclick="toggleSidebar()">
-                    <i class="fas fa-bars"></i>
-                </button>
                 <h1 class="chat-title" id="chatTitle">Medical Assistant</h1>
             </div>
 
@@ -423,9 +533,243 @@
     </div>
 
     <script>
+        // Production-ready sidebar toggle
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const expandBtn = document.getElementById('expandBtn');
+            const isCollapsed = sidebar.classList.contains('collapsed');
+            
+            if (isCollapsed) {
+                sidebar.classList.remove('collapsed');
+                expandBtn.style.display = 'none';
+                localStorage.setItem('sidebarCollapsed', 'false');
+            } else {
+                sidebar.classList.add('collapsed');
+                expandBtn.style.display = 'block';
+                localStorage.setItem('sidebarCollapsed', 'true');
+            }
+        }
+
+        // Initialize sidebar state
+        function initSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const expandBtn = document.getElementById('expandBtn');
+            const isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
+            
+            if (isCollapsed) {
+                sidebar.classList.add('collapsed');
+                expandBtn.style.display = 'block';
+            }
+        }
+
+        // Chat session management
+        let currentThreadId = null;
+        let userLocation = null;
+
+        // Load chat threads from API
+        function loadChatThreads() {
+            fetch('/api/threads')
+                .then(response => {
+                    if (!response.ok) throw new Error('API not available');
+                    return response.json();
+                })
+                .then(threads => {
+                    const threadsList = document.getElementById('threadsList');
+                    if (!threadsList) return;
+                    
+                    threadsList.innerHTML = '';
+                    
+                    if (threads.length === 0) {
+                        threadsList.innerHTML = '<div style="color: #9ca3af; font-size: 12px; text-align: center; padding: 20px;">No previous chats</div>';
+                        return;
+                    }
+                    
+                    threads.forEach(thread => {
+                        const threadDiv = document.createElement('div');
+                        threadDiv.style.cssText = 'display: flex; align-items: center; margin-bottom: 8px; padding: 8px; border-radius: 6px; cursor: pointer; transition: background 0.2s;';
+                        
+                        const isCurrent = thread.id === currentThreadId;
+                        if (isCurrent) {
+                            threadDiv.style.background = '#dbeafe';
+                        }
+                        
+                        threadDiv.innerHTML = `
+                            <div style="flex: 1; font-size: 13px; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                ${isCurrent ? '🟢 ' : ''}${thread.title}
+                            </div>
+                            <button onclick="deleteThread('${thread.id}', event)" style="background: none; border: none; color: #ef4444; cursor: pointer; padding: 4px; margin-left: 8px;">
+                                <i class="fas fa-trash" style="font-size: 10px;"></i>
+                            </button>
+                        `;
+                        
+                        threadDiv.onclick = (e) => {
+                            if (e.target.closest('button')) return;
+                            loadThread(thread.id);
+                        };
+                        
+                        threadDiv.onmouseenter = () => {
+                            if (!isCurrent) threadDiv.style.background = '#f3f4f6';
+                        };
+                        threadDiv.onmouseleave = () => {
+                            if (!isCurrent) threadDiv.style.background = 'transparent';
+                        };
+                        
+                        threadsList.appendChild(threadDiv);
+                    });
+                })
+                .catch(error => {
+                    console.log('Chat threads not available:', error);
+                    const threadsList = document.getElementById('threadsList');
+                    if (threadsList) {
+                        threadsList.innerHTML = '<div style="color: #9ca3af; font-size: 12px; text-align: center; padding: 20px;">Chat history unavailable</div>';
+                    }
+                });
+        }
+
+        // Load specific thread (simplified)
+        function loadThread(threadId) {
+            console.log('Loading thread:', threadId);
+            currentThreadId = threadId;
+            
+            // Clear current messages
+            document.getElementById('chatMessages').innerHTML = '<div style="text-align: center; padding: 20px; color: #6b7280;">Loading chat...</div>';
+            
+            // Hide welcome section
+            const welcomeSection = document.getElementById('welcomeSection');
+            if (welcomeSection) {
+                welcomeSection.style.display = 'none';
+            }
+            
+            // Try to load messages from API
+            fetch(`/api/thread/${threadId}/messages`)
+                .then(response => {
+                    if (!response.ok) throw new Error('Thread not found');
+                    return response.json();
+                })
+                .then(messages => {
+                    // Clear loading message
+                    document.getElementById('chatMessages').innerHTML = '';
+                    
+                    // Add messages
+                    messages.forEach(msg => {
+                        addMessageToChat(msg.role, msg.content);
+                    });
+                    
+                    // Update thread list to show current
+                    loadChatThreads();
+                })
+                .catch(error => {
+                    console.log('Could not load thread messages:', error);
+                    // Show error but don't break
+                    document.getElementById('chatMessages').innerHTML = '<div style="text-align: center; padding: 20px; color: #ef4444;">Could not load chat history</div>';
+                });
+        }
+
+        // Delete thread
+        function deleteThread(threadId, event) {
+            event.stopPropagation();
+            if (confirm('Delete this chat?')) {
+                fetch(`/api/thread/${threadId}/delete`, { method: 'DELETE' })
+                    .then(() => {
+                        if (threadId === currentThreadId) {
+                            newChat();
+                        }
+                        loadChatThreads();
+                    })
+                    .catch(error => console.error('Error deleting thread:', error));
+            }
+        }
+
+        // New chat function (simplified)
+        function newChat() {
+            // Generate new thread ID
+            currentThreadId = 'thread_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+            
+            // Clear all messages first
+            document.getElementById('chatMessages').innerHTML = '';
+            
+            // Create fresh welcome section with action buttons
+            document.getElementById('chatMessages').innerHTML = `
+                <div class="welcome-section" id="welcomeSection">
+                    <h2 class="welcome-title">Welcome to MedAI</h2>
+                    <p class="welcome-subtitle">Your intelligent medical assistant for medicines and healthcare</p>
+                    
+                    <div class="action-cards">
+                        <button class="action-card" onclick="sendQuickMessage('Find medicines near me')">
+                            <i class="fas fa-pills"></i>
+                            <h3>Find Medicines</h3>
+                            <p>Search for medicines and check availability</p>
+                        </button>
+                        
+                        <button class="action-card" onclick="sendQuickMessage('Show me nearby medical stores')">
+                            <i class="fas fa-map-marker-alt"></i>
+                            <h3>Store Locator</h3>
+                            <p>Find nearest pharmacies and medical stores</p>
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            // Update title
+            document.getElementById('chatTitle').textContent = 'Medical Assistant';
+            
+            // Add new thread to sidebar immediately
+            addNewThreadToSidebar(currentThreadId, 'New Chat');
+            
+            console.log('New chat started:', currentThreadId);
+        }
+
+        // Add new thread to sidebar
+        function addNewThreadToSidebar(threadId, title) {
+            const threadsList = document.getElementById('threadsList');
+            if (!threadsList) return;
+            
+            // Remove green dot from all existing threads
+            const existingThreads = threadsList.querySelectorAll('div');
+            existingThreads.forEach(thread => {
+                const titleDiv = thread.querySelector('div');
+                if (titleDiv && titleDiv.textContent.startsWith('🟢 ')) {
+                    titleDiv.textContent = titleDiv.textContent.replace('🟢 ', '');
+                }
+                thread.style.background = 'transparent';
+            });
+            
+            // Create new thread element with green dot
+            const threadDiv = document.createElement('div');
+            threadDiv.style.cssText = 'display: flex; align-items: center; margin-bottom: 8px; padding: 8px; border-radius: 6px; cursor: pointer; transition: background 0.2s; background: #dbeafe;';
+            
+            threadDiv.innerHTML = `
+                <div style="flex: 1; font-size: 13px; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                    🟢 ${title}
+                </div>
+                <button onclick="deleteThread('${threadId}', event)" style="background: none; border: none; color: #ef4444; cursor: pointer; padding: 4px; margin-left: 8px;">
+                    <i class="fas fa-trash" style="font-size: 10px;"></i>
+                </button>
+            `;
+            
+            threadDiv.onclick = (e) => {
+                if (e.target.closest('button')) return;
+                loadThread(threadId);
+            };
+            
+            // Add to top of list
+            threadsList.insertBefore(threadDiv, threadsList.firstChild);
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            initSidebar();
+            // Enable thread loading with error handling
+            try {
+                loadChatThreads();
+            } catch (error) {
+                console.log('Thread loading failed, continuing without it');
+            }
+        });
+
         // Initialize socket connection
         const socket = io();
-        let currentThreadId = 'main-thread-' + Date.now();
+        currentThreadId = 'main-thread-' + Date.now();
         
         socket.on('connect', () => {
             console.log('✅ Socket connected');
@@ -434,11 +778,35 @@
         socket.on('message_received', (data) => {
             console.log('📨 Message received:', data);
             addMessageToChat(data.role, data.content);
+            
+            // Refresh sidebar after assistant response to show new/updated threads
+            if (data.role === 'assistant') {
+                setTimeout(() => {
+                    try {
+                        loadChatThreads();
+                    } catch (error) {
+                        console.log('Could not refresh threads');
+                    }
+                }, 1000);
+            }
+        });
+
+        socket.on('title_updated', (data) => {
+            console.log('📝 Title updated:', data);
+            // Update chat title in header
+            if (data.thread_id === currentThreadId) {
+                document.getElementById('chatTitle').textContent = data.title;
+            }
+            // Refresh sidebar to show updated title
+            try {
+                loadChatThreads();
+            } catch (error) {
+                console.log('Could not refresh threads');
+            }
         });
         
         socket.on('show_map', (data) => {
             console.log('🗺️ Map data received:', data);
-            // Map display can be added here later
         });
         
         // Add message to chat interface
@@ -494,6 +862,8 @@
             
             if (!message) return;
             
+            console.log('Sending message with thread ID:', currentThreadId);
+            
             socket.emit('send_message', {
                 thread_id: currentThreadId,
                 message: message,
@@ -501,6 +871,12 @@
             });
             
             input.value = '';
+            
+            // Hide welcome section
+            const welcomeSection = document.getElementById('welcomeSection');
+            if (welcomeSection) {
+                welcomeSection.style.display = 'none';
+            }
         }
         
         // Handle Enter key
@@ -527,32 +903,10 @@
             }
         }
         
-        // Toggle sidebar for mobile
-        function toggleSidebar() {
-            const sidebar = document.getElementById('sidebar');
-            sidebar.classList.toggle('hidden');
-        }
-        
-        // New chat function
-        function newChat() {
-            currentThreadId = 'main-thread-' + Date.now();
-            document.getElementById('chatMessages').innerHTML = `
-                <div class="welcome-section" id="welcomeSection">
-                    <h2 class="welcome-title">Welcome to MedAI</h2>
-                    <p class="welcome-subtitle">Your intelligent medical assistant for medicines and healthcare</p>
-                    
-                    <div class="action-cards">
-                        <button class="action-card" onclick="sendQuickMessage('Find medicines near me')">
-                            <i class="fas fa-pills"></i>
-                            <h3>Find Medicines</h3>
-                            <p>Search for medicines and check availability</p>
-                        </button>
-                        
-                        <button class="action-card" onclick="sendQuickMessage('Show me nearby medical stores')">
-                            <i class="fas fa-map-marker-alt"></i>
-                            <h3>Store Locator</h3>
-                            <p>Find nearest pharmacies and medical stores</p>
-                        </button>
+        // End of JavaScript
+    </script>
+</body>
+</html>
                     </div>
                 </div>
             `;

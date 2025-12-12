@@ -25,6 +25,56 @@ PYTHON_PATH = sys.executable
 
 st.set_page_config(page_title="MedAI MCP Agent", layout="wide")
 
+# Add collapsible sidebar functionality
+from streamlit.components.v1 import html
+
+# Inject sidebar toggle functionality
+html("""
+<style>
+.sidebar-toggle {
+    position: fixed;
+    top: 60px;
+    left: 10px;
+    z-index: 999;
+    background: #ff4b4b;
+    color: white;
+    border: none;
+    border-radius: 5px;
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 16px;
+}
+.stSidebar > div {
+    transition: transform 0.3s ease;
+}
+.sidebar-collapsed .stSidebar > div {
+    transform: translateX(-100%);
+}
+</style>
+
+<script>
+function toggleSidebar() {
+    const body = document.body;
+    const isCollapsed = body.classList.contains('sidebar-collapsed');
+    
+    if (isCollapsed) {
+        body.classList.remove('sidebar-collapsed');
+        localStorage.setItem('sidebarCollapsed', 'false');
+    } else {
+        body.classList.add('sidebar-collapsed');
+        localStorage.setItem('sidebarCollapsed', 'true');
+    }
+}
+
+// Restore state
+if (localStorage.getItem('sidebarCollapsed') === 'true') {
+    document.body.classList.add('sidebar-collapsed');
+}
+</script>
+
+<button class="sidebar-toggle" onclick="toggleSidebar()">☰</button>
+""", height=0)
+
 # Check URL params FIRST before initializing session state
 try:
     query_params = st.query_params
