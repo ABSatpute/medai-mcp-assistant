@@ -167,11 +167,14 @@ async def process_query(query: str, image_base64: str = None, conversation_histo
         return formatted.content, result
 
     if re.search(r"\b(nearby|near me|nearby stores|pharmacies|store locator|pharmacy)\b", query, re.IGNORECASE):
+        print(f"🗺️ DEBUG - Hardcoded store query triggered for: {query}")
         args = {"latitude": 18.566039, "longitude": 73.766370, "limit": 5}
         if user_location:
             args["latitude"] = user_location.get("latitude", args["latitude"])
             args["longitude"] = user_location.get("longitude", args["longitude"])
+        print(f"🗺️ DEBUG - Calling map server with args: {args}")
         result = await call_mcp_tool("medical-map", "get_nearby_stores", args)
+        print(f"🗺️ DEBUG - Map server result: {result}")
         format_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
         formatted = format_llm.invoke([HumanMessage(content=f"User asked: '{query}'. Store data: {result}. Provide a helpful response about nearby medical stores.")])
         return formatted.content, result
@@ -203,8 +206,11 @@ DECISION RULES:
 Context: {context}
 
 Return ONLY JSON when you want to call a tool, otherwise return a JSON with "use_tool": false and "answer": "<text>"
-Example tool call response JSON:
+
+Example tool call responses:
 {{"use_tool": true, "tool": "get_nearby_stores", "arguments": {{"latitude": 18.566039, "longitude": 73.766370, "limit": 5}}}}
+
+{{"use_tool": true, "tool": "execute_sql", "arguments": {{"sql_query": "SELECT m.medicine_name, m.price, ms.store_name FROM medicines m JOIN store_stock ss ON m.medicine_id = ss.medicine_id JOIN medical_stores ms ON ss.store_id = ms.store_id WHERE m.medicine_name LIKE '%Crocin%' LIMIT 5"}}}}
 """
 
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
@@ -214,8 +220,10 @@ Example tool call response JSON:
     cleaned = _clean_llm_json_response(response.content)
     try:
         decision = json.loads(cleaned)
+        print(f"🤖 DEBUG - LLM Decision: {decision}")  # Debug what LLM decided
     except Exception:
         # LLM didn't return JSON -> treat as plain answer
+        print(f"🤖 DEBUG - LLM returned plain text: {response.content[:100]}...")  # Debug non-JSON response
         return response.content, None
 
     if decision.get("use_tool"):
@@ -231,6 +239,9 @@ Example tool call response JSON:
             server_name = "medical-database"
 
         result = await call_mcp_tool(server_name, tool_name, arguments)
+        
+        # DEBUG: Print what MCP tool returned
+        print(f"🔍 DEBUG - MCP Tool Result: {result}")
 
         # Format for user
         format_prompt = f"""User asked: "{query}"
@@ -343,10 +354,15 @@ def handle_message(data):
         # If raw_data looks like JSON list of stores -> emit show_map
         if raw_data:
             try:
+                print(f"📡 DEBUG - Checking if raw_data is map data: {raw_data[:100]}...")
                 parsed = json.loads(raw_data)
                 if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict) and "latitude" in parsed[0]:
+                    print(f"📡 DEBUG - Emitting show_map event with {len(parsed)} stores")
                     emit("show_map", {"stores": parsed, "user_location": user_location})
-            except Exception:
+                else:
+                    print(f"📡 DEBUG - Raw data is not store data format")
+            except Exception as e:
+                print(f"📡 DEBUG - Error parsing raw_data: {e}")
                 # raw_data may be string or non-JSON - ignore silently
                 pass
 
@@ -371,6 +387,89 @@ def handle_message(data):
 # -------------------------
 # CLI starter
 # -------------------------
+@app.route("/api/route/<float:user_lat>/<float:user_lon>/<float:store_lat>/<float:store_lon>")
+def get_route(user_lat, user_lon, store_lat, store_lon):
+    """Get driving route between user and store"""
+    try:
+        import requests
+        
+        # Get route from OSRM
+        route_url = f"http://router.project-osrm.org/route/v1/driving/{user_lon},{user_lat};{store_lon},{store_lat}?overview=full&geometries=geojson"
+        response = requests.get(route_url, timeout=10)
+        
+        if response.status_code == 200:
+            route_data = response.json()
+            if route_data.get('routes'):
+                coords = route_data['routes'][0]['geometry']['coordinates']
+                route_coords = [[c[1], c[0]] for c in coords]  # Convert [lon,lat] to [lat,lon]
+                
+                distance = route_data['routes'][0]['distance'] / 1000  # km
+                duration = route_data['routes'][0]['duration'] / 60    # minutes
+                
+                return {
+                    "success": True,
+                    "route": route_coords,
+                    "distance": round(distance, 1),
+                    "duration": round(duration)
+                }
+        
+        return {"success": False, "error": "No route found"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@app.route("/api/map/<float:lat>/<float:lon>")
+def get_folium_map(lat, lon):
+    """Generate simple Folium map HTML for popup"""
+    try:
+        import folium
+        
+        # Create simple map
+        m = folium.Map(location=[lat, lon], zoom_start=13)
+        
+        # Add user marker with different style
+        folium.Marker(
+            [lat, lon], 
+            popup="📍 Your Location",
+            icon=folium.Icon(color='red', icon='user', prefix='fa')
+        ).add_to(m)
+        
+        # Get nearby stores
+        result = asyncio.run(call_mcp_tool("medical-map", "get_nearby_stores", {
+            "latitude": lat, 
+            "longitude": lon, 
+            "limit": 5
+        }))
+        
+        # Add store markers with detailed popups
+        if result and result.startswith('['):
+            stores = json.loads(result)
+            for store in stores:
+                popup_html = f"""
+                <div style="min-width: 200px;">
+                    <h4 style="margin: 0 0 8px 0; color: #1e293b;">{store['store_name']}</h4>
+                    <p style="margin: 4px 0; color: #64748b; font-size: 12px;">
+                        📍 {store.get('address', 'Address not available')}
+                    </p>
+                    <p style="margin: 4px 0; color: #64748b; font-size: 12px;">
+                        📞 {store.get('phone_number', 'Phone not available')}
+                    </p>
+                    <p style="margin: 4px 0; color: #2563eb; font-weight: 600; font-size: 12px;">
+                        📏 {store['distance']:.2f} km away
+                    </p>
+                </div>
+                """
+                
+                folium.Marker(
+                    [store['latitude'], store['longitude']], 
+                    popup=folium.Popup(popup_html, max_width=250),
+                    tooltip=store['store_name'],  # Shows name on hover
+                    icon=folium.Icon(color='blue', icon='plus', prefix='fa')
+                ).add_to(m)
+        
+        return m._repr_html_()
+    except Exception as e:
+        return f"<div>Error loading map: {str(e)}</div>"
+
 if __name__ == "__main__":
     print("🏥 Starting MedAI on http://localhost:5000")
     socketio.run(app, debug=True, host="0.0.0.0", port=5000, allow_unsafe_werkzeug=True)
