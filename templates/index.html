@@ -177,6 +177,10 @@
             justify-content: space-between;
         }
 
+        .app-container.sidebar-collapsed .chat-header {
+            padding: 20px 30px !important;
+        }
+
         .chat-title {
             font-size: 24px;
             font-weight: 600;
@@ -215,10 +219,20 @@
             max-height: calc(100vh - 200px);
         }
 
+        .app-container.sidebar-collapsed .messages-container {
+            transition: all 0.3s ease;
+            padding: 20px 30px 120px 30px;
+        }
+
         .welcome-section {
             text-align: center;
             margin: auto;
             max-width: 600px;
+            padding: 0 20px;
+        }
+
+        .app-container.sidebar-collapsed .welcome-section {
+            max-width: 800px;
         }
 
         .welcome-title {
@@ -314,6 +328,10 @@
             line-height: 1.6;
         }
 
+        .app-container.sidebar-collapsed .message-content {
+            max-width: 60%;
+        }
+
         .message.user .message-content {
             background: #2563eb;
             color: white;
@@ -334,6 +352,11 @@
             border-top: 1px solid #e2e8f0;
             background: #f8fafc;
             z-index: 100;
+            transition: left 0.3s ease;
+        }
+
+        .app-container.sidebar-collapsed .input-area {
+            left: 0;
         }
 
         .input-container {
@@ -435,18 +458,10 @@
     </style>
 </head>
 <body>
-    <!-- Expand button (shows when sidebar is collapsed) -->
-    <button id="expandBtn" onclick="toggleSidebar()" class="expand-btn">
-        <i class="fas fa-bars"></i>
-    </button>
-    
     <div class="app-container">
         <!-- Sidebar -->
         <div class="sidebar" id="sidebar">
             <div class="sidebar-header">
-                <button onclick="toggleSidebar()" class="sidebar-toggle">
-                    <i class="fas fa-times"></i>
-                </button>
                 <div class="logo">
                     <i class="fas fa-stethoscope"></i>
                     MedAI
@@ -465,17 +480,6 @@
                 </div>
             </div>
 
-            <!-- About Section -->
-            <div style="margin-top: auto; padding: 20px; border-top: 1px solid #e2e8f0; background: #f9fafb;">
-                <h4 style="margin-bottom: 10px; color: #374151; font-size: 14px;">ℹ️ About</h4>
-                <div style="font-size: 12px; color: #6b7280; line-height: 1.5;">
-                    <div>💊 Prescription analysis</div>
-                    <div>🔍 Medicine search</div>
-                    <div>💰 Price comparison</div>
-                    <div>🏪 Store locator</div>
-                    <div>💬 Medical Q&A</div>
-                </div>
-            </div>
         </div>
 
         <!-- Main Content -->
@@ -492,7 +496,7 @@
                         <p class="welcome-subtitle">Your intelligent medical assistant for medicines and healthcare</p>
                         
                         <div class="action-cards">
-                            <button class="action-card" onclick="sendQuickMessage('Find medicines near me')">
+                            <button class="action-card" onclick="showMedicineSearch()">
                                 <i class="fas fa-pills"></i>
                                 <h3>Find Medicines</h3>
                                 <p>Search for medicines and check availability</p>
@@ -537,14 +541,17 @@
         function toggleSidebar() {
             const sidebar = document.getElementById('sidebar');
             const expandBtn = document.getElementById('expandBtn');
+            const appContainer = document.querySelector('.app-container');
             const isCollapsed = sidebar.classList.contains('collapsed');
             
             if (isCollapsed) {
                 sidebar.classList.remove('collapsed');
+                appContainer.classList.remove('sidebar-collapsed');
                 expandBtn.style.display = 'none';
                 localStorage.setItem('sidebarCollapsed', 'false');
             } else {
                 sidebar.classList.add('collapsed');
+                appContainer.classList.add('sidebar-collapsed');
                 expandBtn.style.display = 'block';
                 localStorage.setItem('sidebarCollapsed', 'true');
             }
@@ -554,12 +561,106 @@
         function initSidebar() {
             const sidebar = document.getElementById('sidebar');
             const expandBtn = document.getElementById('expandBtn');
+            const appContainer = document.querySelector('.app-container');
             const isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
             
             if (isCollapsed) {
                 sidebar.classList.add('collapsed');
+                appContainer.classList.add('sidebar-collapsed');
                 expandBtn.style.display = 'block';
             }
+        }
+        
+        // Show medicine search popup
+        function showMedicineSearch() {
+            const popup = document.createElement('div');
+            popup.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(0,0,0,0.8); z-index: 9999;
+                display: flex; justify-content: center; align-items: center;
+            `;
+            
+            popup.innerHTML = `
+                <div style="background: white; border-radius: 15px; padding: 30px; width: 90%; max-width: 600px; max-height: 80%; overflow-y: auto;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h2 style="margin: 0; color: #1e293b;">💊 Find Medicines</h2>
+                        <button onclick="document.body.removeChild(this.closest('.popup'))" style="background: #ff4444; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer;">✕</button>
+                    </div>
+                    
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 10px; font-weight: 600;">Search by Medicine Name:</label>
+                        <input type="text" id="medicineNameInput" placeholder="Enter medicine name..." style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 16px;">
+                    </div>
+                    
+                    <div style="text-align: center; margin: 20px 0;">
+                        <span style="color: #64748b; font-weight: 600;">OR</span>
+                    </div>
+                    
+                    <div style="margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 10px; font-weight: 600;">Upload Prescription:</label>
+                        <input type="file" id="prescriptionUpload" accept="image/*" style="display: none;" onchange="handlePrescriptionUpload(event)">
+                        <button onclick="document.getElementById('prescriptionUpload').click()" style="width: 100%; padding: 15px; border: 2px dashed #2563eb; background: #f8fafc; color: #2563eb; border-radius: 8px; cursor: pointer; font-size: 16px;">
+                            📷 Upload Prescription Image
+                        </button>
+                    </div>
+                    
+                    <div id="extractedMedicines" style="display: none; margin-bottom: 20px;">
+                        <label style="display: block; margin-bottom: 10px; font-weight: 600;">Extracted Medicines:</label>
+                        <div id="medicinesList" style="border: 2px solid #e2e8f0; border-radius: 8px; padding: 15px; background: #f8fafc;"></div>
+                    </div>
+                    
+                    <button onclick="searchMedicines()" style="width: 100%; padding: 15px; background: #2563eb; color: white; border: none; border-radius: 8px; font-size: 16px; cursor: pointer; font-weight: 600;">
+                        🔍 Search Medicines
+                    </button>
+                    
+                    <div id="searchResults" style="margin-top: 20px;"></div>
+                </div>
+            `;
+            
+            popup.className = 'popup';
+            document.body.appendChild(popup);
+        }
+        
+        // Handle prescription upload
+        function handlePrescriptionUpload(event) {
+            const file = event.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    // Show loading
+                    document.getElementById('extractedMedicines').style.display = 'block';
+                    document.getElementById('medicinesList').innerHTML = '<div style="text-align: center; color: #64748b;">🔍 Analyzing prescription...</div>';
+                    
+                    // Send to backend for analysis
+                    socket.emit('analyze_prescription', {
+                        image: e.target.result
+                    });
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+        
+        // Search medicines function
+        function searchMedicines() {
+            const medicineName = document.getElementById('medicineNameInput').value.trim();
+            const extractedMeds = document.querySelectorAll('.medicine-item input:checked');
+            
+            let medicines = [];
+            if (medicineName) medicines.push(medicineName);
+            extractedMeds.forEach(med => medicines.push(med.value));
+            
+            if (medicines.length === 0) {
+                alert('Please enter a medicine name or upload prescription');
+                return;
+            }
+            
+            // Show loading
+            document.getElementById('searchResults').innerHTML = '<div style="text-align: center; padding: 20px; color: #64748b;">🔍 Searching medicines...</div>';
+            
+            // Send search request
+            socket.emit('search_medicines', {
+                medicines: medicines
+            });
         }
 
         // Chat session management
@@ -695,7 +796,7 @@
                     <p class="welcome-subtitle">Your intelligent medical assistant for medicines and healthcare</p>
                     
                     <div class="action-cards">
-                        <button class="action-card" onclick="sendQuickMessage('Find medicines near me')">
+                        <button class="action-card" onclick="showMedicineSearch()">
                             <i class="fas fa-pills"></i>
                             <h3>Find Medicines</h3>
                             <p>Search for medicines and check availability</p>
@@ -831,7 +932,6 @@
                 <div class="message-avatar">${avatar}</div>
                 <div class="message-content">
                     ${content}
-                    <div class="message-time">${new Date().toLocaleTimeString()}</div>
                 </div>
             `;
             

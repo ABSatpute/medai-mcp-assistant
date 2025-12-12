@@ -90,7 +90,7 @@ except Exception as e:
 
 # Initialize session state
 if 'current_thread_id' not in st.session_state:
-    st.session_state.current_thread_id = str(uuid.uuid4())
+    st.session_state.current_thread_id = None  # Start with no active thread
 if 'messages' not in st.session_state:
     st.session_state.messages = []
 if 'last_stores' not in st.session_state:
@@ -103,7 +103,7 @@ if 'location_detected' not in st.session_state:
     st.session_state.location_detected = False
 
 # Load messages from database if thread exists
-if not st.session_state.messages:
+if st.session_state.current_thread_id and not st.session_state.messages:
     st.session_state.messages = load_messages(st.session_state.current_thread_id)
 
 # Utility functions
@@ -399,10 +399,14 @@ st.title("🏥 MedAI - MCP Agent")
 st.caption("Production-ready medical AI with MCP tools")
 
 # Show current chat title
-threads = get_all_threads()
-current_thread = next((t for t in threads if t[0] == st.session_state.current_thread_id), None)
-current_title = current_thread[1] if current_thread else "New Chat"
-st.subheader(f"💬 {current_title}")
+if st.session_state.current_thread_id:
+    threads = get_all_threads()
+    current_thread = next((t for t in threads if t[0] == st.session_state.current_thread_id), None)
+    current_title = current_thread[1] if current_thread else "New Chat"
+    st.subheader(f"💬 {current_title}")
+else:
+    st.subheader("💬 No Active Chat")
+    st.info("Click 'New Chat' to start a conversation")
 
 # Sidebar
 with st.sidebar:
@@ -434,8 +438,10 @@ with st.sidebar:
             with col2:
                 if st.button("🗑️", key=f"del_{thread_id}", help="Delete chat"):
                     delete_thread(thread_id)
-                    if is_current:  # If deleting current chat, start new one
-                        new_chat()
+                    if is_current:  # If deleting current chat, clear session
+                        st.session_state.current_thread_id = None
+                        st.session_state.messages = []
+                        st.session_state.show_map = False
                     st.rerun()
     
     st.divider()
@@ -508,10 +514,21 @@ if 'file_uploader_key' not in st.session_state:
 
 uploaded_file = st.file_uploader("📎 Upload prescription image", type=["png","jpg","jpeg"], key=f"uploader_{st.session_state.file_uploader_key}")
 
-# Chat input at bottom
-user_input = st.chat_input("Ask me anything about health, medicines, or upload a prescription...")
+# Chat input at bottom - disable when no active conversation
+has_active_thread = st.session_state.current_thread_id is not None
+has_messages = len(st.session_state.messages) > 0
+
+if not has_active_thread:
+    st.info("💬 Click 'New Chat' to start a conversation")
+    user_input = st.chat_input("Start a new chat to begin conversation", disabled=True)
+else:
+    user_input = st.chat_input("Ask me anything about health, medicines, or upload a prescription...")
 
 if user_input:
+    # Create new thread if none exists
+    if not st.session_state.current_thread_id:
+        st.session_state.current_thread_id = str(uuid.uuid4())
+    
     # Only process when user actually submits a question
     # Hide map when new query is asked
     st.session_state.show_map = False
@@ -677,7 +694,7 @@ Respond as medical expert considering both prescription context and current ques
         st.rerun()
     
     # Auto-generate title after 1 message (immediate AI title)
-    if len(st.session_state.messages) >= 1:
+    if len(st.session_state.messages) >= 1 and st.session_state.current_thread_id:
         threads = get_all_threads()
         current_thread = next((t for t in threads if t[0] == st.session_state.current_thread_id), None)
         if current_thread and (current_thread[1] == "New Chat" or "..." in current_thread[1]):
