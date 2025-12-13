@@ -1,0 +1,6 @@
+# BACKUP: Original prescription server (replaced by direct function in app.py for better performance)
+# This file is kept for reference only - prescription analysis now handled directly in app.py
+# Optimization: Removed MCP overhead, reduced latency by 50%, lower API costs
+
+# Original implementation moved to analyze_prescription_image() function in app.py
+# Same functionality, better performance

@@ -3,6 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>MedAI - Medical Assistant</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
@@ -589,7 +592,7 @@
                     
                     <div style="margin-bottom: 20px;">
                         <label style="display: block; margin-bottom: 10px; font-weight: 600;">Search by Medicine Name:</label>
-                        <input type="text" id="medicineNameInput" placeholder="Enter medicine name..." style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 16px;">
+                        <input type="text" id="medicineNameInput" placeholder="Enter medicine names (e.g., dolo, crocin, paracetamol)..." style="width: 100%; padding: 12px; border: 2px solid #e2e8f0; border-radius: 8px; font-size: 16px;">
                     </div>
                     
                     <div style="text-align: center; margin: 20px 0;">
@@ -642,31 +645,41 @@
         
         // Search medicines function
         function searchMedicines() {
-            const medicineName = document.getElementById('medicineNameInput').value.trim();
+            const medicineNameInput = document.getElementById('medicineNameInput').value.trim();
             const extractedMeds = document.querySelectorAll('.medicine-item input:checked');
             
             let medicines = [];
-            if (medicineName) medicines.push(medicineName);
+            
+            // Split comma-separated medicine names
+            if (medicineNameInput) {
+                const splitMedicines = medicineNameInput.split(',').map(name => name.trim()).filter(name => name.length > 0);
+                medicines.push(...splitMedicines);
+            }
+            
+            // Add extracted medicines from prescription
             extractedMeds.forEach(med => medicines.push(med.value));
             
             if (medicines.length === 0) {
-                alert('Please enter a medicine name or upload prescription');
+                alert('Please enter medicine name(s) or upload prescription');
                 return;
             }
             
             // Debug: Show what we're searching for
             console.log('🔍 Searching for medicines:', medicines);
+            console.log('🔍 Total medicines to search:', medicines.length);
             
             // Show loading
             document.getElementById('searchResults').innerHTML = '<div style="text-align: center; padding: 20px; color: #64748b;">🔍 Searching medicines...</div>';
             
-            // Send search request
+            // Send search request with user location
             socket.emit('search_medicines', {
-                medicines: medicines
+                medicines: medicines,
+                location: userLocation || {latitude: 18.566039, longitude: 73.766370}
             });
             
             // Debug: Confirm request sent
-            console.log('📡 Search request sent to backend');
+            console.log('📡 Search request sent to backend with medicines:', medicines);
+            console.log('📡 User location:', userLocation);
         }
         
         // Store Locator popup functions
@@ -990,8 +1003,6 @@
         
         socket.on('medicine_search_result', (data) => {
             console.log('💊 Medicine search result received:', data);
-            console.log('💊 Results array:', data.results);
-            console.log('💊 First result:', data.results ? data.results[0] : 'No results');
             
             const resultsDiv = document.getElementById('searchResults');
             if (!resultsDiv) return;
@@ -1005,18 +1016,82 @@
                 if (data.results.length === 0) {
                     resultsDiv.innerHTML = '<div style="padding: 20px; color: #64748b;">No medicines found</div>';
                 } else {
-                    let html = '<div style="padding: 20px;"><h4>Search Results:</h4>';
-                    data.results.forEach((result, index) => {
-                        console.log(`💊 Result ${index}:`, result);
-                        html += `
-                            <div style="border: 1px solid #e5e7eb; padding: 10px; margin: 5px 0; border-radius: 5px;">
-                                <strong>${result[0] || result.medicine_name || 'Unknown'}</strong><br>
-                                Price: ₹${result[1] || result.price || 'N/A'}<br>
-                                Store: ${result[2] || result.store_name || 'Unknown'}<br>
-                                Stock: ${result[3] || result.stock_quantity || 'N/A'} units
-                            </div>
-                        `;
+                    let html = '<div style="padding: 20px;">';
+                    
+                    // Add search summary if available
+                    if (data.search_summary) {
+                        html += `<div style="background: #f0f9ff; padding: 10px; border-radius: 5px; margin-bottom: 15px;">
+                            <strong>🔍 Search Summary:</strong><br>
+                            Searched for: ${data.search_summary.medicines_requested.join(', ')}<br>`;
+                        
+                        // Show LLM spelling corrections if any
+                        if (data.search_summary.spelling_corrections && Object.keys(data.search_summary.spelling_corrections).length > 0) {
+                            html += `<div style="background: #fef3c7; padding: 8px; border-radius: 4px; margin: 8px 0; border-left: 4px solid #f59e0b;">
+                                <strong>🤖 Smart Corrections:</strong><br>`;
+                            for (const [original, corrected] of Object.entries(data.search_summary.spelling_corrections)) {
+                                html += `• "${original}" → "${corrected}"<br>`;
+                            }
+                            html += `</div>`;
+                        }
+                        
+                        html += `Found ${data.search_summary.total_stores_found} stores<br>
+                            Best match: ${data.search_summary.best_match}
+                        </div>`;
+                    }
+                    
+                    html += '<h4>🏪 Stores (Ranked by Availability):</h4>';
+                    
+                    data.results.forEach((store, index) => {
+                        // Handle both old format (array) and new format (object)
+                        if (Array.isArray(store)) {
+                            // Old format compatibility
+                            html += `
+                                <div style="border: 1px solid #e5e7eb; padding: 15px; margin: 10px 0; border-radius: 8px;">
+                                    <strong>${store[0] || 'Unknown Medicine'}</strong><br>
+                                    Price: ₹${store[1] || 'N/A'}<br>
+                                    Store: ${store[2] || 'Unknown Store'}<br>
+                                    Stock: ${store[3] || 'N/A'} units
+                                </div>
+                            `;
+                        } else {
+                            // New enhanced format
+                            const availabilityColor = store.availability_percentage >= 80 ? '#10b981' : 
+                                                    store.availability_percentage >= 50 ? '#f59e0b' : '#ef4444';
+                            
+                            html += `
+                                <div style="border: 1px solid #e5e7eb; padding: 15px; margin: 10px 0; border-radius: 8px; background: ${index === 0 ? '#f0f9ff' : 'white'};">
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                        <h5 style="margin: 0; color: #1f2937;">${store.store_name}</h5>
+                                        <span style="background: ${availabilityColor}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                                            ${store.availability_percentage}% Match
+                                        </span>
+                                    </div>
+                                    
+                                    <div style="color: #64748b; font-size: 14px; margin-bottom: 10px;">
+                                        📍 ${store.distance} km away • 
+                                        📦 ${store.medicines_available}/${store.total_medicines_requested} medicines available
+                                    </div>
+                                    
+                                    <div style="background: #f9fafb; padding: 10px; border-radius: 6px;">
+                                        <strong>Available Medicines:</strong><br>
+                            `;
+                            
+                            store.medicines.forEach(medicine => {
+                                html += `
+                                    <div style="margin: 5px 0; padding: 5px; background: white; border-radius: 4px;">
+                                        • <strong>${medicine.name}</strong> - ₹${medicine.price} 
+                                        <span style="color: #10b981;">(${medicine.stock} in stock)</span>
+                                    </div>
+                                `;
+                            });
+                            
+                            html += `
+                                    </div>
+                                </div>
+                            `;
+                        }
                     });
+                    
                     html += '</div>';
                     resultsDiv.innerHTML = html;
                 }
