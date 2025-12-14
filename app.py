@@ -637,43 +637,71 @@ def handle_message(data):
         except Exception:
             pass
 
-        # If raw_data looks like JSON list of stores -> emit show_map
-        if raw_data:
-            try:
-                print(f"📡 DEBUG - Checking if raw_data is map data: {raw_data[:100]}...")
-                parsed = json.loads(raw_data)
-                if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict) and "latitude" in parsed[0]:
-                    print(f"📡 DEBUG - Emitting show_map event with {len(parsed)} stores")
-                    emit("show_map", {"stores": parsed, "user_location": user_location})
-                else:
-                    print(f"📡 DEBUG - Raw data is not store data format")
-            except Exception as e:
-                print(f"📡 DEBUG - Error parsing raw_data: {e}")
-                # raw_data may be string or non-JSON - ignore silently
-                pass
-
-        # Emit assistant reply
-        emit("message_received", {"role": "assistant", "content": assistant_response, "timestamp": datetime.utcnow().isoformat()})
-
-        # Auto-generate title for new threads and update every 3 messages
-        message_count = len(conversation_history)
-        if message_count <= 1 or message_count % 3 == 0:
-            try:
-                # Use last 3 messages for better context (or all if less than 3)
-                recent_messages = conversation_history[-3:] if len(conversation_history) >= 3 else conversation_history
-                title = generate_title(recent_messages)
-                update_thread_title(thread_id, title)
-                emit("title_updated", {"thread_id": thread_id, "title": title})
-                print(f"📝 Title updated after {message_count} messages: {title}")
-            except Exception as e:
-                print(f"❌ Title generation failed: {e}")
-                pass
+        # Stream the response in chunks instead of sending all at once
+        if assistant_response:
+            stream_response(assistant_response, thread_id, raw_data, user_location, conversation_history)
 
     except Exception as e:
         # Log error server-side and inform user politely
         import traceback
         traceback.print_exc()
         emit("message_received", {"role": "assistant", "content": f"Sorry, I encountered an error: {str(e)}", "timestamp": datetime.utcnow().isoformat()})
+
+def stream_response(assistant_response, thread_id, raw_data, user_location, conversation_history):
+    """Stream the assistant response in chunks for real-time display"""
+    import time
+    
+    # Start streaming signal
+    emit("response_start", {"thread_id": thread_id})
+    
+    # Split response into words for streaming
+    words = assistant_response.split()
+    chunk_size = 2  # Send 2 words at a time (reduced from 3)
+    
+    for i in range(0, len(words), chunk_size):
+        chunk = " ".join(words[i:i + chunk_size])
+        if i + chunk_size < len(words):
+            chunk += " "  # Add space except for last chunk
+        
+        # Emit chunk
+        emit("response_chunk", {
+            "thread_id": thread_id,
+            "chunk": chunk,
+            "is_final": False
+        })
+        
+        # Slower delay for better voice sync
+        time.sleep(0.3)  # Increased from 0.1s to 0.3s
+    
+    # Send completion signal
+    emit("response_complete", {
+        "thread_id": thread_id,
+        "full_content": assistant_response,
+        "timestamp": datetime.utcnow().isoformat()
+    })
+    
+    # Handle map data if present
+    if raw_data:
+        try:
+            print(f"📡 DEBUG - Checking if raw_data is map data: {raw_data[:100]}...")
+            parsed = json.loads(raw_data)
+            if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict) and "latitude" in parsed[0]:
+                print(f"📡 DEBUG - Emitting show_map event with {len(parsed)} stores")
+                emit("show_map", {"stores": parsed, "user_location": user_location})
+        except Exception as e:
+            print(f"📡 DEBUG - Error parsing raw_data: {e}")
+    
+    # Auto-generate title for new threads and update every 3 messages
+    message_count = len(conversation_history)
+    if message_count <= 1 or message_count % 3 == 0:
+        try:
+            recent_messages = conversation_history[-3:] if len(conversation_history) >= 3 else conversation_history
+            title = generate_title(recent_messages)
+            update_thread_title(thread_id, title)
+            emit("title_updated", {"thread_id": thread_id, "title": title})
+            print(f"📝 Title updated after {message_count} messages: {title}")
+        except Exception as e:
+            print(f"❌ Title generation failed: {e}")
 
 # -------------------------
 # CLI starter  

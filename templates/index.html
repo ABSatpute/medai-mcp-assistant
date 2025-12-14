@@ -430,6 +430,22 @@
             }
         }
 
+        /* Streaming cursor animation */
+        .streaming-cursor {
+            color: var(--primary-blue);
+            font-weight: bold;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+
+        .streaming-content {
+            position: relative;
+        }
+
         .threads-container {
             padding: 0 20px;
         }
@@ -606,6 +622,77 @@
         .message.user .message-content {
             background: #2563eb;
             color: white;
+        }
+
+        /* Message content formatting */
+        .message-content h1, .message-content h2, .message-content h3 {
+            margin: 10px 0 5px 0;
+            font-weight: 600;
+        }
+
+        .message-content h1 { font-size: 18px; }
+        .message-content h2 { font-size: 16px; }
+        .message-content h3 { font-size: 14px; }
+
+        .message-content ul {
+            margin: 8px 0;
+            padding-left: 20px;
+        }
+
+        .message-content li {
+            margin: 4px 0;
+            list-style-type: disc;
+        }
+
+        .message-content strong {
+            font-weight: 600;
+            color: inherit;
+        }
+
+        .message-content em {
+            font-style: italic;
+        }
+
+        .message-content code {
+            background: rgba(0, 0, 0, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+        }
+
+        .message.user .message-content code {
+            background: rgba(255, 255, 255, 0.2);
+        }
+
+        .medicine-highlight {
+            background: linear-gradient(120deg, #dbeafe 0%, #bfdbfe 100%);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 500;
+            color: var(--primary-blue);
+            border: 1px solid var(--primary-blue);
+        }
+
+        .message.user .medicine-highlight {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+
+        .dosage-highlight {
+            background: linear-gradient(120deg, #f0f9ff 0%, #e0f2fe 100%);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 500;
+            color: #0369a1;
+            border: 1px solid #0ea5e9;
+        }
+
+        .message.user .dosage-highlight {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border-color: rgba(255, 255, 255, 0.3);
         }
 
         .message-time {
@@ -956,6 +1043,70 @@
                 voiceBtn.classList.remove('listening');
                 voiceIcon.className = 'fas fa-microphone';
                 voiceBtn.title = 'Start voice input';
+            }
+        }
+
+        // Text-to-Speech functionality
+        let speechSynthesis = window.speechSynthesis;
+        let currentSpeech = null;
+
+        function speakText(text) {
+            // Stop any current speech
+            if (currentSpeech) {
+                speechSynthesis.cancel();
+            }
+
+            // Clean text for better speech (remove markdown, special chars)
+            const cleanText = text
+                .replace(/\*\*(.*?)\*\*/g, '$1') // Remove bold markdown
+                .replace(/\*(.*?)\*/g, '$1')     // Remove italic markdown
+                .replace(/`(.*?)`/g, '$1')       // Remove code markdown
+                .replace(/#{1,6}\s/g, '')        // Remove headers
+                .replace(/[📍🏥💊🔍⚡]/g, '')      // Remove emojis
+                .trim();
+
+            if (cleanText && 'speechSynthesis' in window) {
+                currentSpeech = new SpeechSynthesisUtterance(cleanText);
+                
+                // Configure voice settings
+                currentSpeech.rate = 0.9;        // Slightly slower for clarity
+                currentSpeech.pitch = 1.0;       // Normal pitch
+                currentSpeech.volume = 0.8;      // Slightly quieter
+                
+                // Try to use a more natural voice
+                const voices = speechSynthesis.getVoices();
+                const preferredVoice = voices.find(voice => 
+                    voice.name.includes('Google') || 
+                    voice.name.includes('Microsoft') ||
+                    voice.lang.startsWith('en')
+                );
+                if (preferredVoice) {
+                    currentSpeech.voice = preferredVoice;
+                }
+
+                currentSpeech.onstart = function() {
+                    console.log('🔊 Started speaking AI response');
+                };
+
+                currentSpeech.onend = function() {
+                    console.log('🔊 Finished speaking AI response');
+                    currentSpeech = null;
+                };
+
+                currentSpeech.onerror = function(event) {
+                    console.error('🔊 Speech synthesis error:', event.error);
+                    currentSpeech = null;
+                };
+
+                // Start speaking
+                speechSynthesis.speak(currentSpeech);
+            }
+        }
+
+        function stopSpeaking() {
+            if (speechSynthesis.speaking) {
+                speechSynthesis.cancel();
+                currentSpeech = null;
             }
         }
 
@@ -1438,6 +1589,11 @@
             
             addMessageToChat(data.role, data.content);
             
+            // Auto-play text-to-speech for AI responses
+            if (data.role === 'assistant') {
+                speakText(data.content);
+            }
+            
             // Add AI thinking loader after user message appears
             if (data.role === 'user') {
                 addAIThinkingLoader();
@@ -1459,6 +1615,145 @@
                 }, 1000);
             }
         });
+
+        // Handle streaming response events
+        let currentStreamingMessage = null;
+        let streamingContent = '';
+        let accumulatedText = '';
+        let lastSpokenLength = 0;
+
+        socket.on('response_start', (data) => {
+            console.log('🔄 Streaming response started');
+            removeAIThinkingLoader();
+            
+            // Stop any current speech
+            if (speechSynthesis.speaking) {
+                speechSynthesis.cancel();
+            }
+            
+            // Reset speech tracking
+            accumulatedText = '';
+            lastSpokenLength = 0;
+            
+            // Create empty assistant message for streaming
+            const messagesContainer = document.getElementById('chatMessages');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message assistant';
+            messageDiv.id = `streaming-${data.thread_id}`;
+            
+            messageDiv.innerHTML = `
+                <div class="message-avatar">
+                    <i class="fas fa-robot"></i>
+                </div>
+                <div class="message-content streaming-content">
+                    <span class="streaming-cursor">|</span>
+                </div>
+            `;
+            
+            messagesContainer.appendChild(messageDiv);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            
+            currentStreamingMessage = messageDiv.querySelector('.message-content');
+            streamingContent = '';
+        });
+
+        socket.on('response_chunk', (data) => {
+            if (currentStreamingMessage) {
+                streamingContent += data.chunk;
+                const formattedContent = formatMessageContent(streamingContent);
+                currentStreamingMessage.innerHTML = formattedContent + '<span class="streaming-cursor">|</span>';
+                
+                // Accumulate text for natural speech
+                accumulatedText += data.chunk;
+                
+                // Speak when we have a complete sentence or phrase
+                speakAccumulatedText();
+                
+                // Auto-scroll
+                const messagesContainer = document.getElementById('chatMessages');
+                messagesContainer.scrollTop = messagesContainer.scrollHeight;
+            }
+        });
+
+        socket.on('response_complete', (data) => {
+            console.log('✅ Streaming response completed');
+            
+            if (currentStreamingMessage) {
+                // Remove cursor and finalize content
+                const formattedContent = formatMessageContent(data.full_content);
+                currentStreamingMessage.innerHTML = formattedContent;
+                currentStreamingMessage.classList.remove('streaming-content');
+                
+                // Speak any remaining text
+                speakRemainingText();
+                
+                // Reset streaming state
+                currentStreamingMessage = null;
+                streamingContent = '';
+                accumulatedText = '';
+                lastSpokenLength = 0;
+            }
+        });
+
+        function speakAccumulatedText() {
+            // Clean text for speech
+            const cleanText = accumulatedText.replace(/<[^>]*>/g, '').trim();
+            
+            // Find natural break points (sentences, commas, etc.)
+            const sentences = cleanText.match(/[^.!?]*[.!?]+/g) || [];
+            
+            // If we have complete sentences, speak them
+            if (sentences.length > 0) {
+                const textToSpeak = sentences.join(' ').trim();
+                const newTextToSpeak = textToSpeak.substring(lastSpokenLength);
+                
+                if (newTextToSpeak.trim() && 'speechSynthesis' in window) {
+                    const utterance = new SpeechSynthesisUtterance(newTextToSpeak);
+                    utterance.rate = 0.9;
+                    utterance.pitch = 1.0;
+                    utterance.volume = 0.8;
+                    
+                    // Use natural voice
+                    const voices = speechSynthesis.getVoices();
+                    const preferredVoice = voices.find(voice => 
+                        voice.name.includes('Google') || 
+                        voice.name.includes('Microsoft') ||
+                        voice.lang.startsWith('en')
+                    );
+                    if (preferredVoice) {
+                        utterance.voice = preferredVoice;
+                    }
+                    
+                    speechSynthesis.speak(utterance);
+                    lastSpokenLength = textToSpeak.length;
+                }
+            }
+        }
+
+        function speakRemainingText() {
+            // Speak any remaining text that wasn't spoken
+            const cleanText = accumulatedText.replace(/<[^>]*>/g, '').trim();
+            const remainingText = cleanText.substring(lastSpokenLength).trim();
+            
+            if (remainingText && 'speechSynthesis' in window) {
+                const utterance = new SpeechSynthesisUtterance(remainingText);
+                utterance.rate = 0.9;
+                utterance.pitch = 1.0;
+                utterance.volume = 0.8;
+                
+                const voices = speechSynthesis.getVoices();
+                const preferredVoice = voices.find(voice => 
+                    voice.name.includes('Google') || 
+                    voice.name.includes('Microsoft') ||
+                    voice.lang.startsWith('en')
+                );
+                if (preferredVoice) {
+                    utterance.voice = preferredVoice;
+                }
+                
+                speechSynthesis.speak(utterance);
+            }
+        }
 
         socket.on('title_updated', (data) => {
             console.log('📝 Title updated:', data);
@@ -1695,15 +1990,43 @@
                 '<i class="fas fa-user"></i>' : 
                 '<i class="fas fa-robot"></i>';
             
+            // Format content for better display
+            const formattedContent = formatMessageContent(content);
+            
             messageDiv.innerHTML = `
                 <div class="message-avatar">${avatar}</div>
                 <div class="message-content">
-                    ${content}
+                    ${formattedContent}
                 </div>
             `;
             
             messagesContainer.appendChild(messageDiv);
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        function formatMessageContent(content) {
+            // Convert markdown-like formatting to HTML
+            let formatted = content
+                // Bold text: **text** -> <strong>text</strong>
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                // Italic text: *text* -> <em>text</em>
+                .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                // Code: `text` -> <code>text</code>
+                .replace(/`(.*?)`/g, '<code>$1</code>')
+                // Line breaks: \n -> <br>
+                .replace(/\n/g, '<br>')
+                // Headers: ### text -> <h3>text</h3>
+                .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+                .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+                .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+                // Lists: - item -> <li>item</li>
+                .replace(/^- (.*$)/gm, '<li>$1</li>')
+                // Wrap consecutive <li> items in <ul>
+                .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+                // Fix nested ul tags
+                .replace(/<\/ul>\s*<ul>/g, '');
+
+            return formatted;
         }
         
         // Send quick message from action cards
