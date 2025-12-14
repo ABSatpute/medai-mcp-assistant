@@ -402,6 +402,16 @@ def api_delete_thread(thread_id):
     delete_thread(thread_id)
     return jsonify({"success": True})
 
+@app.route("/api/medicine-names")
+def get_medicine_names_api():
+    """Get all medicine names for autocomplete suggestions"""
+    try:
+        medicine_names = get_medicine_names()
+        return jsonify({"medicines": medicine_names})
+    except Exception as e:
+        print(f"❌ Error fetching medicine names: {e}")
+        return jsonify({"medicines": []})
+
 # -------------------------
 # SocketIO message handler
 # -------------------------
