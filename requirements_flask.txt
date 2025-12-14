@@ -4,6 +4,9 @@ Flask-SocketIO==5.3.6
 python-socketio==5.9.0
 python-engineio==4.7.1
 
+# AWS SDK for Polly
+boto3>=1.26.0
+
 # Existing requirements
 streamlit>=1.28.0
 langchain-openai>=0.1.0

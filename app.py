@@ -14,6 +14,8 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
+import boto3
+from io import BytesIO
 
 # Local DB helpers (assumed present in project)
 from chat_db import (
@@ -40,6 +42,14 @@ PYTHON_PATH = sys.executable
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "medai_secret_key_2024")
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Initialize AWS Polly client
+try:
+    polly_client = boto3.client('polly', region_name='us-east-1')
+    print("✅ AWS Polly client initialized")
+except Exception as e:
+    print(f"❌ AWS Polly initialization failed: {e}")
+    polly_client = None
 
 # ---------------------
 # Utilities / LLM calls
@@ -648,30 +658,57 @@ def handle_message(data):
         emit("message_received", {"role": "assistant", "content": f"Sorry, I encountered an error: {str(e)}", "timestamp": datetime.utcnow().isoformat()})
 
 def stream_response(assistant_response, thread_id, raw_data, user_location, conversation_history):
-    """Stream the assistant response in chunks for real-time display"""
+    """Stream the assistant response with AWS Polly voice synthesis"""
     import time
     
     # Start streaming signal
     emit("response_start", {"thread_id": thread_id})
     
-    # Split response into words for streaming
+    # Generate audio with AWS Polly (if available)
+    if polly_client:
+        try:
+            # Clean text for Polly (remove markdown)
+            clean_text = assistant_response.replace('**', '').replace('*', '').replace('`', '')
+            
+            polly_response = polly_client.synthesize_speech(
+                Text=clean_text,
+                OutputFormat='mp3',
+                VoiceId='Joanna',
+                Engine='neural'
+            )
+            
+            # Convert audio to base64 for transmission
+            audio_data = polly_response['AudioStream'].read()
+            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+            
+            # Send audio to frontend
+            emit("polly_audio_ready", {
+                "thread_id": thread_id,
+                "audio_data": audio_base64
+            })
+            
+            print(f"🔊 AWS Polly audio generated: {len(audio_data)} bytes")
+            
+        except Exception as e:
+            print(f"❌ AWS Polly error: {e}")
+            # Fallback to browser TTS will be handled by frontend
+    
+    # Stream text chunks for visual effect
     words = assistant_response.split()
-    chunk_size = 2  # Send 2 words at a time (reduced from 3)
+    chunk_size = 2
     
     for i in range(0, len(words), chunk_size):
         chunk = " ".join(words[i:i + chunk_size])
         if i + chunk_size < len(words):
-            chunk += " "  # Add space except for last chunk
+            chunk += " "
         
-        # Emit chunk
         emit("response_chunk", {
             "thread_id": thread_id,
             "chunk": chunk,
             "is_final": False
         })
         
-        # Slower delay for better voice sync
-        time.sleep(0.3)  # Increased from 0.1s to 0.3s
+        time.sleep(0.3)
     
     # Send completion signal
     emit("response_complete", {
@@ -680,18 +717,15 @@ def stream_response(assistant_response, thread_id, raw_data, user_location, conv
         "timestamp": datetime.utcnow().isoformat()
     })
     
-    # Handle map data if present
+    # Handle map data and title generation (same as before)
     if raw_data:
         try:
-            print(f"📡 DEBUG - Checking if raw_data is map data: {raw_data[:100]}...")
             parsed = json.loads(raw_data)
             if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict) and "latitude" in parsed[0]:
-                print(f"📡 DEBUG - Emitting show_map event with {len(parsed)} stores")
                 emit("show_map", {"stores": parsed, "user_location": user_location})
         except Exception as e:
             print(f"📡 DEBUG - Error parsing raw_data: {e}")
     
-    # Auto-generate title for new threads and update every 3 messages
     message_count = len(conversation_history)
     if message_count <= 1 or message_count % 3 == 0:
         try:
@@ -699,7 +733,6 @@ def stream_response(assistant_response, thread_id, raw_data, user_location, conv
             title = generate_title(recent_messages)
             update_thread_title(thread_id, title)
             emit("title_updated", {"thread_id": thread_id, "title": title})
-            print(f"📝 Title updated after {message_count} messages: {title}")
         except Exception as e:
             print(f"❌ Title generation failed: {e}")
 

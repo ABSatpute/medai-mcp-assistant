@@ -1619,8 +1619,7 @@
         // Handle streaming response events
         let currentStreamingMessage = null;
         let streamingContent = '';
-        let accumulatedText = '';
-        let lastSpokenLength = 0;
+        let pollyAudio = null;
 
         socket.on('response_start', (data) => {
             console.log('🔄 Streaming response started');
@@ -1630,10 +1629,10 @@
             if (speechSynthesis.speaking) {
                 speechSynthesis.cancel();
             }
-            
-            // Reset speech tracking
-            accumulatedText = '';
-            lastSpokenLength = 0;
+            if (pollyAudio) {
+                pollyAudio.pause();
+                pollyAudio = null;
+            }
             
             // Create empty assistant message for streaming
             const messagesContainer = document.getElementById('chatMessages');
@@ -1657,17 +1656,42 @@
             streamingContent = '';
         });
 
+        // Handle AWS Polly audio
+        socket.on('polly_audio_ready', (data) => {
+            console.log('🔊 AWS Polly audio received');
+            
+            try {
+                // Convert base64 to audio blob
+                const audioData = atob(data.audio_data);
+                const audioArray = new Uint8Array(audioData.length);
+                for (let i = 0; i < audioData.length; i++) {
+                    audioArray[i] = audioData.charCodeAt(i);
+                }
+                
+                const audioBlob = new Blob([audioArray], { type: 'audio/mpeg' });
+                const audioUrl = URL.createObjectURL(audioBlob);
+                
+                pollyAudio = new Audio(audioUrl);
+                pollyAudio.volume = 0.8;
+                
+                pollyAudio.play().then(() => {
+                    console.log('🔊 AWS Polly audio started');
+                }).catch(error => {
+                    console.error('🔊 Audio play error:', error);
+                    fallbackToBrowserTTS();
+                });
+                
+            } catch (error) {
+                console.error('🔊 Polly audio processing error:', error);
+                fallbackToBrowserTTS();
+            }
+        });
+
         socket.on('response_chunk', (data) => {
             if (currentStreamingMessage) {
                 streamingContent += data.chunk;
                 const formattedContent = formatMessageContent(streamingContent);
                 currentStreamingMessage.innerHTML = formattedContent + '<span class="streaming-cursor">|</span>';
-                
-                // Accumulate text for natural speech
-                accumulatedText += data.chunk;
-                
-                // Speak when we have a complete sentence or phrase
-                speakAccumulatedText();
                 
                 // Auto-scroll
                 const messagesContainer = document.getElementById('chatMessages');
@@ -1684,74 +1708,17 @@
                 currentStreamingMessage.innerHTML = formattedContent;
                 currentStreamingMessage.classList.remove('streaming-content');
                 
-                // Speak any remaining text
-                speakRemainingText();
-                
                 // Reset streaming state
                 currentStreamingMessage = null;
                 streamingContent = '';
-                accumulatedText = '';
-                lastSpokenLength = 0;
             }
         });
 
-        function speakAccumulatedText() {
-            // Clean text for speech
-            const cleanText = accumulatedText.replace(/<[^>]*>/g, '').trim();
-            
-            // Find natural break points (sentences, commas, etc.)
-            const sentences = cleanText.match(/[^.!?]*[.!?]+/g) || [];
-            
-            // If we have complete sentences, speak them
-            if (sentences.length > 0) {
-                const textToSpeak = sentences.join(' ').trim();
-                const newTextToSpeak = textToSpeak.substring(lastSpokenLength);
-                
-                if (newTextToSpeak.trim() && 'speechSynthesis' in window) {
-                    const utterance = new SpeechSynthesisUtterance(newTextToSpeak);
-                    utterance.rate = 0.9;
-                    utterance.pitch = 1.0;
-                    utterance.volume = 0.8;
-                    
-                    // Use natural voice
-                    const voices = speechSynthesis.getVoices();
-                    const preferredVoice = voices.find(voice => 
-                        voice.name.includes('Google') || 
-                        voice.name.includes('Microsoft') ||
-                        voice.lang.startsWith('en')
-                    );
-                    if (preferredVoice) {
-                        utterance.voice = preferredVoice;
-                    }
-                    
-                    speechSynthesis.speak(utterance);
-                    lastSpokenLength = textToSpeak.length;
-                }
-            }
-        }
-
-        function speakRemainingText() {
-            // Speak any remaining text that wasn't spoken
-            const cleanText = accumulatedText.replace(/<[^>]*>/g, '').trim();
-            const remainingText = cleanText.substring(lastSpokenLength).trim();
-            
-            if (remainingText && 'speechSynthesis' in window) {
-                const utterance = new SpeechSynthesisUtterance(remainingText);
-                utterance.rate = 0.9;
-                utterance.pitch = 1.0;
-                utterance.volume = 0.8;
-                
-                const voices = speechSynthesis.getVoices();
-                const preferredVoice = voices.find(voice => 
-                    voice.name.includes('Google') || 
-                    voice.name.includes('Microsoft') ||
-                    voice.lang.startsWith('en')
-                );
-                if (preferredVoice) {
-                    utterance.voice = preferredVoice;
-                }
-                
-                speechSynthesis.speak(utterance);
+        function fallbackToBrowserTTS() {
+            // Fallback to browser TTS if Polly fails
+            if (streamingContent) {
+                const cleanText = streamingContent.replace(/<[^>]*>/g, '');
+                speakText(cleanText);
             }
         }
 
