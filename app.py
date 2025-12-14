@@ -178,16 +178,45 @@ def fuzzy_match_medicine(user_input: str, threshold: float = 0.6) -> str:
     except Exception as e:
         print(f"FUZZY MATCH ERROR: {str(e)}")
         return user_input
-    """Generate a short title from the first user message (AI fallback + deterministic fallback)."""
+
+def generate_title(messages):
+    """Generate a short title from recent conversation messages using AI."""
     if not messages:
         return "New Chat"
-    first_user_msg = next((m["content"] for m in messages if m.get("role") == "user"), "New Chat")
+    
+    # Extract conversation context
+    conversation_text = ""
+    for msg in messages:
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if role == "user":
+            conversation_text += f"User: {content}\n"
+        elif role == "assistant":
+            conversation_text += f"Assistant: {content[:100]}...\n"  # Limit assistant response length
+    
     try:
         llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-        prompt = f"Generate a short 5-word title for this medical query:\n{first_user_msg}"
+        prompt = f"""Generate a short 4-5 word title that summarizes this medical conversation. Be specific and concise:
+
+{conversation_text.strip()}
+
+Title should reflect the main medical topic or concern discussed."""
+        
         response = llm.invoke([HumanMessage(content=prompt)])
-        title = response.content.strip().split("\n")[0][:60]
-        return title or (first_user_msg[:60] + ("..." if len(first_user_msg) > 60 else ""))
+        title = response.content.strip().split("\n")[0][:50]
+        
+        # Clean up the title (remove quotes, extra spaces)
+        title = title.strip('"\'').strip()
+        
+        return title if title else "Medical Consultation"
+    except Exception as e:
+        print(f"❌ Title generation error: {e}")
+        # Fallback - use first user message
+        first_user_msg = next((m["content"] for m in messages if m.get("role") == "user"), "New Chat")
+        words = first_user_msg.split()
+        if len(words) <= 5:
+            return first_user_msg[:40]
+        return " ".join(words[:5]) + "..."
     except Exception:
         # Fallback - smart truncation at word boundary
         words = first_user_msg.split()
@@ -616,13 +645,18 @@ def handle_message(data):
         # Emit assistant reply
         emit("message_received", {"role": "assistant", "content": assistant_response, "timestamp": datetime.utcnow().isoformat()})
 
-        # Auto-generate title for new threads if needed
-        if len(conversation_history) <= 1:
+        # Auto-generate title for new threads and update every 3 messages
+        message_count = len(conversation_history)
+        if message_count <= 1 or message_count % 3 == 0:
             try:
-                title = generate_title([{"role": "user", "content": message}])
+                # Use last 3 messages for better context (or all if less than 3)
+                recent_messages = conversation_history[-3:] if len(conversation_history) >= 3 else conversation_history
+                title = generate_title(recent_messages)
                 update_thread_title(thread_id, title)
                 emit("title_updated", {"thread_id": thread_id, "title": title})
-            except Exception:
+                print(f"📝 Title updated after {message_count} messages: {title}")
+            except Exception as e:
+                print(f"❌ Title generation failed: {e}")
                 pass
 
     except Exception as e:
