@@ -976,7 +976,7 @@
                         silenceTimer = setTimeout(() => {
                             if (finalTranscript.trim()) {
                                 stopVoiceInput();
-                                sendMessage();
+                                sendMessage('voice');
                             }
                         }, 2000);
                     }
@@ -1587,12 +1587,10 @@
         socket.on('message_received', (data) => {
             console.log('📨 Message received:', data);
             
-            addMessageToChat(data.role, data.content);
+            addMessageToChat(data.role, data.content, data.image);
             
-            // Auto-play text-to-speech for AI responses
-            if (data.role === 'assistant') {
-                speakText(data.content);
-            }
+            // Voice synthesis now handled conditionally by backend
+            // Only voice inputs will get polly_audio_ready event
             
             // Add AI thinking loader after user message appears
             if (data.role === 'user') {
@@ -1715,10 +1713,13 @@
         });
 
         function fallbackToBrowserTTS() {
-            // Fallback to browser TTS if Polly fails
-            if (streamingContent) {
+            // Only use browser TTS fallback for voice inputs
+            if (currentInputMethod === 'voice' && streamingContent) {
+                console.log('Using browser TTS fallback for voice input');
                 const cleanText = streamingContent.replace(/<[^>]*>/g, '');
                 speakText(cleanText);
+            } else {
+                console.log('Skipping TTS fallback - input method:', currentInputMethod);
             }
         }
 
@@ -1940,7 +1941,7 @@
         }
 
         // Add message to chat interface
-        function addMessageToChat(role, content) {
+        function addMessageToChat(role, content, imageData = null) {
             const messagesContainer = document.getElementById('chatMessages');
             
             // Hide welcome section when first message is added
@@ -1958,7 +1959,7 @@
                 '<i class="fas fa-robot"></i>';
             
             // Format content for better display
-            const formattedContent = formatMessageContent(content);
+            const formattedContent = formatMessageContent(content, imageData);
             
             messageDiv.innerHTML = `
                 <div class="message-avatar">${avatar}</div>
@@ -1971,7 +1972,12 @@
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
-        function formatMessageContent(content) {
+        function formatMessageContent(content, imageData = null) {
+            // If image data is provided, display the image instead of text
+            if (imageData) {
+                return `<img src="${imageData}" alt="Uploaded prescription" style="max-width: 300px; max-height: 300px; border-radius: 8px; margin: 5px 0;">`;
+            }
+            
             // Convert markdown-like formatting to HTML
             let formatted = content
                 // Bold text: **text** -> <strong>text</strong>
@@ -2013,18 +2019,25 @@
         }
         
         // Handle manual message input
-        function sendMessage() {
+        // Track current input method for voice control
+        let currentInputMethod = 'text';
+        
+        function sendMessage(inputMethod = 'text') {
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
             
             if (!message) return;
             
-            console.log('Sending message with thread ID:', currentThreadId);
+            // Store current input method for voice control
+            currentInputMethod = inputMethod;
+            
+            console.log('Sending message with thread ID:', currentThreadId, 'Input method:', inputMethod);
             
             socket.emit('send_message', {
                 thread_id: currentThreadId,
                 message: message,
-                location: null
+                location: null,
+                input_method: inputMethod
             });
             
             input.value = '';
@@ -2047,13 +2060,17 @@
         function handleImageUpload(event) {
             const file = event.target.files[0];
             if (file) {
+                // Set input method for voice control
+                currentInputMethod = 'image';
+                
                 const reader = new FileReader();
                 reader.onload = function(e) {
                     socket.emit('send_message', {
                         thread_id: currentThreadId,
                         message: '',
                         image: e.target.result,
-                        location: null
+                        location: null,
+                        input_method: 'image'
                     });
                 };
                 reader.readAsDataURL(file);

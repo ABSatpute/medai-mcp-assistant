@@ -46,9 +46,9 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 # Initialize AWS Polly client
 try:
     polly_client = boto3.client('polly', region_name='us-east-1')
-    print("✅ AWS Polly client initialized")
+    print("AWS Polly client initialized successfully")
 except Exception as e:
-    print(f"❌ AWS Polly initialization failed: {e}")
+    print(f"AWS Polly initialization failed: {e}")
     polly_client = None
 
 # ---------------------
@@ -624,14 +624,19 @@ def handle_message(data):
       "thread_id": "<uuid>", 
       "message": "<text>", 
       "image": "data:image/jpeg;base64,...." (optional),
-      "location": {"latitude": 12.34, "longitude": 56.78} (optional)
+      "location": {"latitude": 12.34, "longitude": 56.78} (optional),
+      "input_method": "text" | "voice" | "image" (optional)
     }
     """
     thread_id = data.get("thread_id", str(uuid.uuid4()))
     message = data.get("message", "")
     image_data = data.get("image", None)
     user_location = data.get("location", None)
-
+    input_method = data.get("input_method", "text")  # Default to text if not specified
+    
+    # DEBUG: Log what input method was received
+    print(f"DEBUG: Received input_method = '{input_method}' for message: '{message[:50]}...'")
+    
     # Ensure consistent timestamping
     timestamp = datetime.utcnow().isoformat()
 
@@ -643,7 +648,10 @@ def handle_message(data):
         pass
 
     # Emit back user message (so UI shows it immediately)
-    emit("message_received", {"role": "user", "content": message or "📷 Uploaded prescription image", "timestamp": timestamp})
+    message_data = {"role": "user", "content": message or "📷 Uploaded prescription image", "timestamp": timestamp}
+    if image_data:
+        message_data["image"] = image_data
+    emit("message_received", message_data)
 
     # PROCESS: image or text
     try:
@@ -661,7 +669,8 @@ def handle_message(data):
                 assistant_response = (
                     f"I've analyzed your prescription and found **{med_list}**. "
                     "How can I help you with these medicines? I can check availability, find nearby stores, or provide information about them. "
-                    "Always consult your doctor for medical advice."
+                    "Always consult your doctor for medical advice.\n\n"
+                    f"[Context: Prescription contains: {med_list}]"
                 )
                 # Persist prescription analysis as assistant message
                 raw_data = json.dumps(prescription_data)
@@ -681,7 +690,7 @@ def handle_message(data):
 
         # Stream the response in chunks instead of sending all at once
         if assistant_response:
-            stream_response(assistant_response, thread_id, raw_data, user_location, conversation_history)
+            stream_response(assistant_response, thread_id, raw_data, user_location, conversation_history, input_method)
 
     except Exception as e:
         # Log error server-side and inform user politely
@@ -689,15 +698,15 @@ def handle_message(data):
         traceback.print_exc()
         emit("message_received", {"role": "assistant", "content": f"Sorry, I encountered an error: {str(e)}", "timestamp": datetime.utcnow().isoformat()})
 
-def stream_response(assistant_response, thread_id, raw_data, user_location, conversation_history):
-    """Stream the assistant response with AWS Polly voice synthesis"""
+def stream_response(assistant_response, thread_id, raw_data, user_location, conversation_history, input_method="text"):
+    """Stream the assistant response with conditional AWS Polly voice synthesis"""
     import time
     
     # Start streaming signal
     emit("response_start", {"thread_id": thread_id})
     
-    # Generate audio with AWS Polly (if available)
-    if polly_client:
+    # Generate audio with AWS Polly ONLY if user used voice input
+    if polly_client and input_method == "voice":
         try:
             # Clean text for Polly (remove markdown)
             clean_text = assistant_response.replace('**', '').replace('*', '').replace('`', '')
@@ -719,11 +728,15 @@ def stream_response(assistant_response, thread_id, raw_data, user_location, conv
                 "audio_data": audio_base64
             })
             
-            print(f"🔊 AWS Polly audio generated: {len(audio_data)} bytes")
+            print(f"AWS Polly audio generated for voice input: {len(audio_data)} bytes")
             
         except Exception as e:
-            print(f"❌ AWS Polly error: {e}")
+            print(f"AWS Polly error: {e}")
             # Fallback to browser TTS will be handled by frontend
+    elif input_method == "voice":
+        print(f"Voice input detected but Polly unavailable, frontend will use browser TTS")
+    else:
+        print(f"{input_method.title()} input - no voice synthesis needed")
     
     # Stream text chunks for visual effect
     words = assistant_response.split()
