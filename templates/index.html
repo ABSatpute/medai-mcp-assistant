@@ -1978,8 +1978,11 @@
                 return `<img src="${imageData}" alt="Uploaded prescription" style="max-width: 300px; max-height: 300px; border-radius: 8px; margin: 5px 0;">`;
             }
             
+            // Remove context messages from display (but keep in conversation history)
+            let displayContent = content.replace(/\[Context:.*?\]/g, '').trim();
+            
             // Convert markdown-like formatting to HTML
-            let formatted = content
+            let formatted = displayContent
                 // Bold text: **text** -> <strong>text</strong>
                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                 // Italic text: *text* -> <em>text</em>
