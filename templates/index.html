@@ -1216,7 +1216,11 @@
         // Search medicines function
         function searchMedicines() {
             const medicineNameInput = document.getElementById('medicineNameInput').value.trim();
-            const extractedMeds = document.querySelectorAll('.medicine-item input:checked');
+            const extractedMeds = document.querySelectorAll('input.medicine-item:checked');
+            
+            console.log('🔍 DEBUG - Text input:', medicineNameInput);
+            console.log('🔍 DEBUG - Extracted checkboxes found:', extractedMeds.length);
+            extractedMeds.forEach((med, i) => console.log(`🔍 DEBUG - Checkbox ${i}:`, med.value));
             
             let medicines = [];
             
@@ -1228,6 +1232,8 @@
             
             // Add extracted medicines from prescription
             extractedMeds.forEach(med => medicines.push(med.value));
+            
+            console.log('🔍 DEBUG - Final medicines array:', medicines);
             
             if (medicines.length === 0) {
                 alert('Please enter medicine name(s) or upload prescription');
@@ -1896,6 +1902,7 @@
                             </label>
                         `;
                     });
+                    html += `<button onclick="removePrescription()" style="margin-top: 10px; padding: 8px 15px; background: #ff4444; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 14px;">🗑️ Remove Prescription</button>`;
                     medicinesList.innerHTML = html;
                 }
                 
@@ -2060,6 +2067,19 @@
         }
         
         // Handle image upload
+        // Remove prescription function
+        function removePrescription() {
+            const extractedSection = document.getElementById('extractedMedicines');
+            const prescriptionUpload = document.getElementById('prescriptionUpload');
+            
+            if (extractedSection) {
+                extractedSection.style.display = 'none';
+            }
+            if (prescriptionUpload) {
+                prescriptionUpload.value = '';
+            }
+        }
+        
         function handleImageUpload(event) {
             const file = event.target.files[0];
             if (file) {
