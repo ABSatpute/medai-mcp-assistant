@@ -9,6 +9,7 @@
     <title>MedAI - Medical Assistant</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
     <style>
         /* CSS Variables for Consistency */
         :root {
@@ -1413,16 +1414,752 @@
             }
         }
 
-        function toggleCart() {
-            alert('Cart functionality coming in next step!');
+        async function toggleCart() {
+            if (!authToken) {
+                alert('Please login to view cart');
+                return;
+            }
+            
+            console.log('🛒 Loading cart...');
+            
+            try {
+                const response = await fetch('/api/cart', {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+                
+                console.log('🛒 Cart response status:', response.status);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('🛒 Cart data:', data);
+                    showCartModal(data);
+                } else {
+                    const errorData = await response.json();
+                    console.error('🛒 Cart error:', errorData);
+                    alert('Error loading cart: ' + (errorData.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('🛒 Cart fetch error:', error);
+                alert('Error loading cart: ' + error.message);
+            }
+        }
+        
+        function showCartModal(cartData) {
+            const modal = document.createElement('div');
+            modal.id = 'cartModal';
+            modal.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(0,0,0,0.5); z-index: 10000;
+                display: flex; justify-content: center; align-items: center;
+            `;
+            
+            // Close modal when clicking outside
+            modal.onclick = function(e) {
+                if (e.target === modal) {
+                    closeCartModal();
+                }
+            };
+            
+            let itemsHtml = '';
+            if (cartData.items && cartData.items.length > 0) {
+                cartData.items.forEach(item => {
+                    itemsHtml += `
+                        <div style="border: 1px solid #e5e7eb; padding: 12px; margin: 8px 0; border-radius: 6px; display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong>${item.medicine_name}</strong><br>
+                                <small>${item.store_name}</small><br>
+                                <span>₹${item.unit_price} × ${item.quantity} = ₹${item.total_price}</span>
+                            </div>
+                            <button onclick="removeFromCart(${item.item_id})" style="background: #ef4444; color: white; border: none; padding: 6px 10px; border-radius: 4px; cursor: pointer;">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    `;
+                });
+            } else {
+                itemsHtml = '<div style="text-align: center; color: #64748b; padding: 20px;">Your cart is empty</div>';
+            }
+            
+            modal.innerHTML = `
+                <div onclick="event.stopPropagation()" style="background: white; border-radius: 12px; width: 90%; max-width: 500px; max-height: 80vh; overflow-y: auto;">
+                    <div style="padding: 20px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center;">
+                        <h3 style="margin: 0;">🛒 My Cart</h3>
+                        <button onclick="closeCartModal()" style="background: none; border: none; font-size: 18px; cursor: pointer; color: #64748b;">✕</button>
+                    </div>
+                    <div style="padding: 20px;">
+                        ${itemsHtml}
+                        ${cartData.items && cartData.items.length > 0 ? `
+                            <div style="border-top: 2px solid #e5e7eb; padding-top: 15px; margin-top: 15px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; font-size: 18px; font-weight: bold;">
+                                    <span>Total: ₹${cartData.total_amount || 0}</span>
+                                    <button onclick="startCheckout()" style="background: #10b981; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600;">
+                                        Proceed to Checkout
+                                    </button>
+                                </div>
+                            </div>
+                        ` : ''}
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+        }
+        
+        function closeCartModal() {
+            const modal = document.getElementById('cartModal');
+            if (modal) {
+                document.body.removeChild(modal);
+            }
         }
 
-        function viewOrders() {
-            alert('Orders page coming soon!');
+        // Checkout Functions
+        async function startCheckout() {
+            if (!authToken) {
+                alert('Please login to checkout');
+                return;
+            }
+            
+            // Close cart modal first
+            closeCartModal();
+            
+            // Get cart data
+            try {
+                const response = await fetch('/api/cart', {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const cartData = await response.json();
+                    if (cartData.items && cartData.items.length > 0) {
+                        showCheckoutModal(cartData);
+                    } else {
+                        alert('Your cart is empty');
+                    }
+                } else {
+                    alert('Error loading cart for checkout');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+        
+        function showCheckoutModal(cartData) {
+            const modal = document.createElement('div');
+            modal.id = 'checkoutModal';
+            modal.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(0,0,0,0.5); z-index: 10001;
+                display: flex; justify-content: center; align-items: center;
+                overflow-y: auto; padding: 20px;
+            `;
+            
+            // Close modal when clicking outside
+            modal.onclick = function(e) {
+                if (e.target === modal) {
+                    closeCheckoutModal();
+                }
+            };
+            
+            let itemsHtml = '';
+            cartData.items.forEach(item => {
+                itemsHtml += `
+                    <div style="border: 1px solid #e5e7eb; padding: 10px; margin: 5px 0; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; background: #f9fafb;">
+                        <div>
+                            <strong>${item.medicine_name}</strong><br>
+                            <small style="color: #64748b;">${item.store_name}</small>
+                        </div>
+                        <div style="text-align: right;">
+                            <div>₹${item.unit_price} × ${item.quantity}</div>
+                            <div style="font-weight: bold;">₹${item.total_price}</div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            modal.innerHTML = `
+                <div onclick="event.stopPropagation()" style="background: white; border-radius: 12px; width: 100%; max-width: 600px; max-height: 90vh; overflow-y: auto;">
+                    <div style="padding: 20px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center;">
+                        <h3 style="margin: 0;">🛒 Checkout</h3>
+                        <button onclick="closeCheckoutModal()" style="background: none; border: none; font-size: 18px; cursor: pointer; color: #64748b;">✕</button>
+                    </div>
+                    
+                    <div style="padding: 20px;">
+                        <!-- Order Summary -->
+                        <div style="margin-bottom: 25px;">
+                            <h4 style="margin: 0 0 15px 0; color: #1f2937;">📦 Order Summary</h4>
+                            ${itemsHtml}
+                            <div style="border-top: 2px solid #e5e7eb; padding-top: 10px; margin-top: 10px; display: flex; justify-content: space-between; font-size: 18px; font-weight: bold;">
+                                <span>Total:</span>
+                                <span>₹${cartData.total_amount || 0}</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Delivery Address -->
+                        <div style="margin-bottom: 25px;">
+                            <h4 style="margin: 0 0 15px 0; color: #1f2937;">🏠 Delivery Address</h4>
+                            <form id="addressForm" style="display: grid; gap: 12px;">
+                                <input type="text" id="fullName" placeholder="Full Name *" required style="padding: 12px; border: 1px solid #d1d5db; border-radius: 6px;">
+                                <input type="tel" id="phone" placeholder="Phone Number *" required style="padding: 12px; border: 1px solid #d1d5db; border-radius: 6px;">
+                                <textarea id="streetAddress" placeholder="Street Address *" required style="padding: 12px; border: 1px solid #d1d5db; border-radius: 6px; resize: vertical; min-height: 60px;"></textarea>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                                    <input type="text" id="city" placeholder="City *" required style="padding: 12px; border: 1px solid #d1d5db; border-radius: 6px;">
+                                    <input type="text" id="state" placeholder="State *" required style="padding: 12px; border: 1px solid #d1d5db; border-radius: 6px;">
+                                </div>
+                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                                    <input type="text" id="postalCode" placeholder="Postal Code *" required style="padding: 12px; border: 1px solid #d1d5db; border-radius: 6px;">
+                                    <input type="text" id="landmark" placeholder="Landmark (optional)" style="padding: 12px; border: 1px solid #d1d5db; border-radius: 6px;">
+                                </div>
+                            </form>
+                        </div>
+                        
+                        <!-- Action Buttons -->
+                        <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                            <button onclick="closeCheckoutModal()" style="padding: 12px 24px; border: 1px solid #d1d5db; background: white; color: #374151; border-radius: 8px; cursor: pointer;">
+                                Cancel
+                            </button>
+                            <button onclick="proceedToPayment()" style="padding: 12px 24px; background: #10b981; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: 600;">
+                                Proceed to Payment
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+            
+            // Pre-fill user data if available
+            if (currentUser) {
+                document.getElementById('fullName').value = currentUser.full_name || '';
+                document.getElementById('phone').value = currentUser.phone || '';
+            }
+        }
+        
+        function closeCheckoutModal() {
+            const modal = document.getElementById('checkoutModal');
+            if (modal) {
+                document.body.removeChild(modal);
+            }
+        }
+        
+        async function proceedToPayment() {
+            // Validate address form
+            const form = document.getElementById('addressForm');
+            const requiredFields = form.querySelectorAll('[required]');
+            let isValid = true;
+            
+            requiredFields.forEach(field => {
+                if (!field.value.trim()) {
+                    field.style.borderColor = '#ef4444';
+                    isValid = false;
+                } else {
+                    field.style.borderColor = '#d1d5db';
+                }
+            });
+            
+            if (!isValid) {
+                alert('Please fill in all required fields');
+                return;
+            }
+            
+            // Collect address data
+            const addressData = {
+                full_name: document.getElementById('fullName').value,
+                phone: document.getElementById('phone').value,
+                street_address: document.getElementById('streetAddress').value,
+                city: document.getElementById('city').value,
+                state: document.getElementById('state').value,
+                postal_code: document.getElementById('postalCode').value,
+                landmark: document.getElementById('landmark').value
+            };
+            
+            // Get cart total
+            const totalElement = document.querySelector('#checkoutModal [style*="font-weight: bold"] span:last-child');
+            const totalAmount = parseFloat(totalElement.textContent.replace('₹', ''));
+            
+            try {
+                // Create Razorpay order
+                const response = await fetch('/api/payment/create-order', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        amount: totalAmount,
+                        address: addressData
+                    })
+                });
+                
+                const orderData = await response.json();
+                
+                if (response.ok) {
+                    // Initialize Razorpay checkout
+                    const options = {
+                        key: orderData.key_id,
+                        amount: orderData.amount * 100, // Amount in paise
+                        currency: orderData.currency,
+                        name: 'MedAI',
+                        description: 'Medicine Order Payment',
+                        order_id: orderData.order_id,
+                        handler: function(response) {
+                            // Payment successful
+                            verifyPayment(response, addressData);
+                        },
+                        prefill: {
+                            name: addressData.full_name,
+                            email: currentUser.email,
+                            contact: addressData.phone
+                        },
+                        theme: {
+                            color: '#2563eb'
+                        },
+                        modal: {
+                            ondismiss: function() {
+                                console.log('Payment cancelled');
+                            }
+                        }
+                    };
+                    
+                    const rzp = new Razorpay(options);
+                    rzp.open();
+                    
+                } else {
+                    alert('Error creating payment order: ' + orderData.error);
+                }
+                
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+        
+        async function verifyPayment(paymentResponse, addressData) {
+            try {
+                const response = await fetch('/api/payment/verify', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        razorpay_order_id: paymentResponse.razorpay_order_id,
+                        razorpay_payment_id: paymentResponse.razorpay_payment_id,
+                        razorpay_signature: paymentResponse.razorpay_signature,
+                        address: addressData
+                    })
+                });
+                
+                const result = await response.json();
+                
+                if (response.ok) {
+                    // Payment verified and order created
+                    closeCheckoutModal();
+                    showOrderSuccess(result);
+                    loadCartCount(); // Reset cart count
+                } else {
+                    alert('Payment verification failed: ' + result.error);
+                }
+                
+            } catch (error) {
+                alert('Error verifying payment: ' + error.message);
+            }
+        }
+        
+        function showOrderSuccess(orderData) {
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(0,0,0,0.5); z-index: 10002;
+                display: flex; justify-content: center; align-items: center;
+            `;
+            
+            modal.innerHTML = `
+                <div style="background: white; border-radius: 12px; padding: 40px; text-align: center; max-width: 400px; margin: 20px;">
+                    <div style="font-size: 48px; color: #10b981; margin-bottom: 20px;">✅</div>
+                    <h3 style="color: #1f2937; margin-bottom: 15px;">Order Placed Successfully!</h3>
+                    <p style="color: #64748b; margin-bottom: 20px;">
+                        Your order has been confirmed and payment received.
+                    </p>
+                    <div style="background: #f0f9ff; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                        <strong>Order ID:</strong> ${orderData.order_id}<br>
+                        <strong>Payment ID:</strong> ${orderData.payment_id}
+                    </div>
+                    <button onclick="document.body.removeChild(this.closest('div').parentElement)" 
+                            style="background: #2563eb; color: white; border: none; padding: 12px 24px; border-radius: 8px; cursor: pointer; font-weight: 600;">
+                        Continue Shopping
+                    </button>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+        }
+        
+        async function removeFromCart(itemId) {
+            if (!authToken) return;
+            
+            try {
+                const response = await fetch('/api/cart/remove', {
+                    method: 'DELETE',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ item_id: itemId })
+                });
+                
+                if (response.ok) {
+                    // Close current cart modal and reopen with updated data
+                    closeCartModal();
+                    toggleCart();
+                    loadCartCount();
+                } else {
+                    alert('Error removing item from cart');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+
+        async function viewOrders() {
+            if (!authToken) {
+                alert('Please login to view orders');
+                return;
+            }
+            
+            // Close user modal first
+            closeUserModal();
+            
+            try {
+                const response = await fetch('/api/orders', {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    showOrdersModal(data.orders);
+                } else {
+                    alert('Error loading orders');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+        
+        function showOrdersModal(orders) {
+            const modal = document.createElement('div');
+            modal.id = 'ordersModal';
+            modal.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(0,0,0,0.5); z-index: 10001;
+                display: flex; justify-content: center; align-items: center;
+                overflow-y: auto; padding: 20px;
+            `;
+            
+            modal.onclick = function(e) {
+                if (e.target === modal) {
+                    closeOrdersModal();
+                }
+            };
+            
+            let ordersHtml = '';
+            if (orders && orders.length > 0) {
+                orders.forEach(order => {
+                    const statusColor = {
+                        'PENDING': '#f59e0b',
+                        'CONFIRMED': '#2563eb',
+                        'PROCESSING': '#8b5cf6',
+                        'SHIPPED': '#06b6d4',
+                        'DELIVERED': '#10b981',
+                        'CANCELLED': '#ef4444'
+                    }[order.status] || '#64748b';
+                    
+                    const orderDate = new Date(order.created_at).toLocaleDateString();
+                    const estimatedDelivery = order.estimated_delivery ? 
+                        new Date(order.estimated_delivery).toLocaleDateString() : 'TBD';
+                    
+                    ordersHtml += `
+                        <div style="border: 1px solid #e5e7eb; padding: 16px; margin: 12px 0; border-radius: 8px; background: white; cursor: pointer;" 
+                             onclick="viewOrderDetails('${order.order_id}')">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <div>
+                                    <strong>Order #${order.order_id.substring(0, 8)}</strong>
+                                    <div style="font-size: 12px; color: #64748b;">Placed on ${orderDate}</div>
+                                </div>
+                                <span style="background: ${statusColor}; color: white; padding: 4px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                                    ${order.status}
+                                </span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div>
+                                    <div style="font-size: 14px; color: #64748b;">
+                                        Delivery to: ${order.delivery_address.city}, ${order.delivery_address.state}
+                                    </div>
+                                    <div style="font-size: 12px; color: #64748b;">
+                                        Expected: ${estimatedDelivery}
+                                    </div>
+                                </div>
+                                <div style="text-align: right;">
+                                    <div style="font-weight: bold; font-size: 16px;">₹${order.final_amount}</div>
+                                    <div style="font-size: 12px; color: #64748b;">${order.payment_method}</div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                ordersHtml = '<div style="text-align: center; color: #64748b; padding: 40px;">No orders found</div>';
+            }
+            
+            modal.innerHTML = `
+                <div onclick="event.stopPropagation()" style="background: white; border-radius: 12px; width: 100%; max-width: 600px; max-height: 90vh; overflow-y: auto;">
+                    <div style="padding: 20px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center;">
+                        <h3 style="margin: 0;">📦 My Orders</h3>
+                        <button onclick="closeOrdersModal()" style="background: none; border: none; font-size: 18px; cursor: pointer; color: #64748b;">✕</button>
+                    </div>
+                    <div style="padding: 20px;">
+                        ${ordersHtml}
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
+        }
+        
+        function closeOrdersModal() {
+            const modal = document.getElementById('ordersModal');
+            if (modal) {
+                document.body.removeChild(modal);
+            }
+        }
+        
+        async function viewOrderDetails(orderId) {
+            try {
+                const response = await fetch(`/api/orders/${orderId}`, {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    showOrderDetailsModal(data.order);
+                } else {
+                    alert('Error loading order details');
+                }
+            } catch (error) {
+                alert('Error: ' + error.message);
+            }
+        }
+        
+        function showOrderDetailsModal(order) {
+            const modal = document.createElement('div');
+            modal.style.cssText = `
+                position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(0,0,0,0.5); z-index: 10002;
+                display: flex; justify-content: center; align-items: center;
+                overflow-y: auto; padding: 20px;
+            `;
+            
+            let itemsHtml = '';
+            order.items.forEach(item => {
+                itemsHtml += `
+                    <div style="border: 1px solid #e5e7eb; padding: 12px; margin: 8px 0; border-radius: 6px; background: #f9fafb;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <div>
+                                <strong>${item.medicine_name}</strong>
+                                ${item.brand_name ? `<br><small style="color: #64748b;">${item.brand_name}</small>` : ''}
+                            </div>
+                            <div style="text-align: right;">
+                                <div>₹${item.unit_price} × ${item.quantity}</div>
+                                <div style="font-weight: bold;">₹${item.total_price}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            let statusHtml = '';
+            order.status_history.forEach(status => {
+                const statusDate = new Date(status.created_at).toLocaleString();
+                statusHtml += `
+                    <div style="padding: 8px 0; border-bottom: 1px solid #f3f4f6;">
+                        <div style="font-weight: 600;">${status.status}</div>
+                        <div style="font-size: 12px; color: #64748b;">${statusDate}</div>
+                        ${status.notes ? `<div style="font-size: 14px; color: #374151;">${status.notes}</div>` : ''}
+                    </div>
+                `;
+            });
+            
+            modal.innerHTML = `
+                <div style="background: white; border-radius: 12px; width: 100%; max-width: 600px; max-height: 90vh; overflow-y: auto;">
+                    <div style="padding: 20px; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center;">
+                        <h3 style="margin: 0;">📦 Order Details</h3>
+                        <button onclick="document.body.removeChild(this.closest('div').parentElement)" style="background: none; border: none; font-size: 18px; cursor: pointer; color: #64748b;">✕</button>
+                    </div>
+                    <div style="padding: 20px;">
+                        <!-- Order Info -->
+                        <div style="background: #f0f9ff; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+                            <div><strong>Order ID:</strong> ${order.order_id}</div>
+                            <div><strong>Status:</strong> ${order.status}</div>
+                            <div><strong>Payment:</strong> ${order.payment_method} (${order.payment_status})</div>
+                            <div><strong>Order Date:</strong> ${new Date(order.created_at).toLocaleString()}</div>
+                            ${order.estimated_delivery ? `<div><strong>Expected Delivery:</strong> ${new Date(order.estimated_delivery).toLocaleDateString()}</div>` : ''}
+                        </div>
+                        
+                        <!-- Items -->
+                        <h4>Items Ordered:</h4>
+                        ${itemsHtml}
+                        
+                        <!-- Total -->
+                        <div style="border-top: 2px solid #e5e7eb; padding-top: 15px; margin-top: 15px;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                <span>Subtotal:</span>
+                                <span>₹${order.total_amount}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 10px;">
+                                <span>Delivery Fee:</span>
+                                <span>₹${order.delivery_fee}</span>
+                            </div>
+                            <div style="display: flex; justify-content: space-between; font-size: 18px; font-weight: bold;">
+                                <span>Total:</span>
+                                <span>₹${order.final_amount}</span>
+                            </div>
+                        </div>
+                        
+                        <!-- Delivery Address -->
+                        <div style="margin-top: 20px;">
+                            <h4>Delivery Address:</h4>
+                            <div style="background: #f9fafb; padding: 12px; border-radius: 6px;">
+                                <div><strong>${order.delivery_address.full_name}</strong></div>
+                                <div>${order.delivery_address.phone}</div>
+                                <div>${order.delivery_address.street_address}</div>
+                                <div>${order.delivery_address.city}, ${order.delivery_address.state} - ${order.delivery_address.postal_code}</div>
+                                ${order.delivery_address.landmark ? `<div>Landmark: ${order.delivery_address.landmark}</div>` : ''}
+                            </div>
+                        </div>
+                        
+                        <!-- Status History -->
+                        <div style="margin-top: 20px;">
+                            <h4>Order Tracking:</h4>
+                            <div style="background: #f9fafb; padding: 12px; border-radius: 6px;">
+                                ${statusHtml}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(modal);
         }
 
         function viewProfile() {
             alert('Profile editing coming soon!');
+        }
+
+        // Add to Cart Functions
+        async function addToCart(medicineName, price, storeName, stock, buttonElement) {
+            // Check if user is logged in
+            if (!authToken || !currentUser) {
+                alert('Please login to add items to cart');
+                toggleUserModal();
+                return;
+            }
+            
+            // Get button element if not passed
+            if (!buttonElement) {
+                buttonElement = event.target;
+            }
+            
+            try {
+                // Show loading state
+                buttonElement.disabled = true;
+                buttonElement.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Adding...';
+                
+                // Add to cart
+                const response = await fetch('/api/cart/add', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({
+                        medicine_name: medicineName,
+                        store_name: storeName,
+                        quantity: 1,
+                        unit_price: price
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    // Success - update cart count and show feedback
+                    loadCartCount();
+                    showCartNotification(`✅ ${medicineName} added to cart!`);
+                    
+                    // Reset button
+                    buttonElement.disabled = false;
+                    buttonElement.innerHTML = '<i class="fas fa-check"></i> Added';
+                    buttonElement.style.background = '#10b981';
+                    
+                    // Reset button after 2 seconds
+                    setTimeout(() => {
+                        buttonElement.innerHTML = '<i class="fas fa-cart-plus"></i> Add to Cart';
+                        buttonElement.style.background = '#2563eb';
+                    }, 2000);
+                    
+                } else {
+                    throw new Error(data.error || 'Failed to add to cart');
+                }
+                
+            } catch (error) {
+                console.error('Add to cart error:', error);
+                alert('Error adding to cart: ' + error.message);
+                
+                // Reset button
+                buttonElement.disabled = false;
+                buttonElement.innerHTML = '<i class="fas fa-cart-plus"></i> Add to Cart';
+            }
+        }
+        
+        function showCartNotification(message) {
+            // Create notification
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: #10b981;
+                color: white;
+                padding: 12px 20px;
+                border-radius: 8px;
+                z-index: 10001;
+                font-weight: 500;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+                transform: translateX(100%);
+                transition: transform 0.3s ease;
+            `;
+            notification.textContent = message;
+            
+            document.body.appendChild(notification);
+            
+            // Animate in
+            setTimeout(() => {
+                notification.style.transform = 'translateX(0)';
+            }, 100);
+            
+            // Remove after 3 seconds
+            setTimeout(() => {
+                notification.style.transform = 'translateX(100%)';
+                setTimeout(() => {
+                    document.body.removeChild(notification);
+                }, 300);
+            }, 3000);
         }
 
         // Voice input functionality
@@ -2362,9 +3099,15 @@
                             
                             store.medicines.forEach(medicine => {
                                 html += `
-                                    <div style="margin: 5px 0; padding: 5px; background: white; border-radius: 4px;">
-                                        • <strong>${medicine.name}</strong> - ₹${medicine.price} 
-                                        <span style="color: #10b981;">(${medicine.stock} in stock)</span>
+                                    <div style="margin: 5px 0; padding: 8px; background: white; border-radius: 4px; display: flex; justify-content: space-between; align-items: center;">
+                                        <div>
+                                            • <strong>${medicine.name}</strong> - ₹${medicine.price} 
+                                            <span style="color: #10b981;">(${medicine.stock} in stock)</span>
+                                        </div>
+                                        <button class="add-to-cart-btn" onclick="addToCart('${medicine.name}', ${medicine.price}, '${store.store_name}', ${medicine.stock}, this)" 
+                                                style="background: #2563eb; color: white; border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; display: flex; align-items: center; gap: 4px;">
+                                            <i class="fas fa-cart-plus"></i> Add to Cart
+                                        </button>
                                     </div>
                                 `;
                             });

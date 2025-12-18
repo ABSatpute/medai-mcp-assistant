@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity
+import razorpay
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from mcp import ClientSession, StdioServerParameters
@@ -32,6 +33,7 @@ from chat_db import (
 # E-commerce models
 from models.user import User
 from models.cart import Cart
+from models.order import Order
 
 load_dotenv()
 
@@ -52,6 +54,14 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 
 # Initialize JWT
 jwt = JWTManager(app)
+
+# Initialize Razorpay client
+try:
+    razorpay_client = razorpay.Client(auth=(os.getenv("RAZORPAY_KEY_ID"), os.getenv("RAZORPAY_KEY_SECRET")))
+    print("Razorpay client initialized successfully")
+except Exception as e:
+    print(f"Razorpay initialization failed: {e}")
+    razorpay_client = None
 
 # Initialize AWS Polly client
 try:
@@ -989,13 +999,35 @@ def add_to_cart_api():
         user_id = get_jwt_identity()
         data = request.get_json()
         
+        # Handle both ID-based and name-based requests
         medicine_id = data.get('medicine_id')
         store_id = data.get('store_id')
+        medicine_name = data.get('medicine_name')
+        store_name = data.get('store_name')
         quantity = data.get('quantity', 1)
         unit_price = data.get('unit_price')
         
+        # If IDs not provided, look them up by names
+        if not medicine_id and medicine_name:
+            result = asyncio.run(call_mcp_tool("medical-database", "execute_sql", {
+                "sql_query": f"SELECT medicine_id FROM medicines WHERE medicine_name LIKE '%{medicine_name}%' LIMIT 1"
+            }))
+            if result and result.startswith('['):
+                medicines = json.loads(result)
+                if medicines:
+                    medicine_id = medicines[0]['medicine_id']
+        
+        if not store_id and store_name:
+            result = asyncio.run(call_mcp_tool("medical-database", "execute_sql", {
+                "sql_query": f"SELECT store_id FROM medical_stores WHERE store_name LIKE '%{store_name}%' LIMIT 1"
+            }))
+            if result and result.startswith('['):
+                stores = json.loads(result)
+                if stores:
+                    store_id = stores[0]['store_id']
+        
         if not all([medicine_id, store_id, unit_price]):
-            return jsonify({'error': 'Missing required fields'}), 400
+            return jsonify({'error': 'Missing required fields or could not find medicine/store'}), 400
         
         cart = Cart(user_id)
         if cart.add_item(medicine_id, store_id, quantity, unit_price):
@@ -1048,6 +1080,128 @@ def remove_from_cart():
         else:
             return jsonify({'error': 'Failed to remove item'}), 500
             
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# -------------------------
+# Payment Routes
+# -------------------------
+@app.route('/api/payment/create-order', methods=['POST'])
+@jwt_required()
+def create_payment_order():
+    """Create Razorpay order for payment"""
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        amount = data.get('amount')  # Amount in rupees
+        address_data = data.get('address')
+        
+        if not amount or not address_data:
+            return jsonify({'error': 'Amount and address required'}), 400
+        
+        # Create Razorpay order
+        razorpay_order = razorpay_client.order.create({
+            'amount': int(amount * 100),  # Amount in paise
+            'currency': 'INR',
+            'payment_capture': 1
+        })
+        
+        # Save address to database (simplified for now)
+        # In production, you'd save to user_addresses table
+        
+        return jsonify({
+            'success': True,
+            'order_id': razorpay_order['id'],
+            'amount': amount,
+            'currency': 'INR',
+            'key_id': os.getenv("RAZORPAY_KEY_ID")
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/payment/verify', methods=['POST'])
+@jwt_required()
+def verify_payment():
+    """Verify Razorpay payment and create order"""
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        razorpay_order_id = data.get('razorpay_order_id')
+        razorpay_payment_id = data.get('razorpay_payment_id')
+        razorpay_signature = data.get('razorpay_signature')
+        address_data = data.get('address')
+        
+        # Verify payment signature
+        params_dict = {
+            'razorpay_order_id': razorpay_order_id,
+            'razorpay_payment_id': razorpay_payment_id,
+            'razorpay_signature': razorpay_signature
+        }
+        
+        razorpay_client.utility.verify_payment_signature(params_dict)
+        
+        # Payment verified successfully
+        # Get cart items before clearing
+        cart = Cart(user_id)
+        cart_items = cart.get_items()
+        
+        if not cart_items:
+            return jsonify({'error': 'Cart is empty'}), 400
+        
+        # Create order using Order model
+        order = Order(user_id)
+        payment_data = {
+            'razorpay_order_id': razorpay_order_id,
+            'razorpay_payment_id': razorpay_payment_id
+        }
+        
+        if order.create_order(cart_items, address_data, payment_data):
+            # Clear cart after successful order
+            cart.clear_cart()
+            
+            return jsonify({
+                'success': True,
+                'message': 'Payment successful and order created',
+                'order_id': order.order_id,
+                'payment_id': razorpay_payment_id
+            }), 200
+        else:
+            return jsonify({'error': 'Failed to create order'}), 500
+        
+    except razorpay.errors.SignatureVerificationError:
+        return jsonify({'error': 'Payment verification failed'}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# -------------------------
+# Order Management Routes
+# -------------------------
+@app.route('/api/orders', methods=['GET'])
+@jwt_required()
+def get_user_orders():
+    """Get user's order history"""
+    try:
+        user_id = get_jwt_identity()
+        orders = Order.get_user_orders(user_id)
+        return jsonify({'orders': orders}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/orders/<order_id>', methods=['GET'])
+@jwt_required()
+def get_order_details(order_id):
+    """Get detailed order information"""
+    try:
+        user_id = get_jwt_identity()
+        order_details = Order.get_order_details(order_id, user_id)
+        
+        if order_details:
+            return jsonify({'order': order_details}), 200
+        else:
+            return jsonify({'error': 'Order not found'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
