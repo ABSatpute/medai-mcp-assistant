@@ -845,7 +845,253 @@
         }
 
         .hidden {
+            display: none !important;
+        }
+
+        .auth-form.hidden {
+            display: none !important;
+        }
+
+        /* Header Actions */
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .user-btn, .cart-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 16px;
+            border: 1px solid var(--gray-border);
+            border-radius: 8px;
+            background: white;
+            color: var(--gray-dark);
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .user-btn:hover, .cart-btn:hover {
+            border-color: var(--primary-blue);
+            color: var(--primary-blue);
+        }
+
+        .user-btn.logged-in {
+            background: var(--primary-blue);
+            color: white;
+            border-color: var(--primary-blue);
+        }
+
+        .cart-btn {
+            background: #10b981;
+            color: white;
+            border-color: #10b981;
+        }
+
+        .cart-btn:hover {
+            background: #059669;
+            border-color: #059669;
+            color: white;
+        }
+
+        /* Modal Styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
             display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 10000;
+        }
+
+        .modal-overlay.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 400px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--gray-border);
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            color: var(--gray-dark);
+            font-size: 18px;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 18px;
+            color: var(--gray-text);
+            cursor: pointer;
+            padding: 4px;
+        }
+
+        .modal-close:hover {
+            color: var(--gray-dark);
+        }
+
+        .modal-body {
+            padding: 24px;
+        }
+
+        /* Auth Form Styles */
+        .auth-tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--gray-border);
+        }
+
+        .auth-tab {
+            flex: 1;
+            padding: 12px 16px;
+            border: none;
+            background: white;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.2s;
+            color: var(--gray-text);
+        }
+
+        .auth-tab.active {
+            background: var(--primary-blue);
+            color: white;
+        }
+
+        .auth-form {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .auth-form input {
+            padding: 12px 16px;
+            border: 1px solid var(--gray-border);
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.2s;
+        }
+
+        .auth-form input:focus {
+            outline: none;
+            border-color: var(--primary-blue);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .auth-btn {
+            padding: 12px 20px;
+            background: var(--primary-blue);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: background 0.2s;
+        }
+
+        .auth-btn:hover {
+            background: var(--primary-blue-hover);
+        }
+
+        /* User Profile Styles */
+        .profile-info {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 24px;
+            padding: 16px;
+            background: var(--gray-light);
+            border-radius: 8px;
+        }
+
+        .profile-avatar {
+            font-size: 48px;
+            color: var(--primary-blue);
+        }
+
+        .profile-details h4 {
+            margin: 0 0 4px 0;
+            color: var(--gray-dark);
+            font-size: 16px;
+        }
+
+        .profile-details p {
+            margin: 0;
+            color: var(--gray-text);
+            font-size: 14px;
+        }
+
+        .profile-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .profile-btn {
+            padding: 12px 16px;
+            background: white;
+            border: 1px solid var(--gray-border);
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+            color: var(--gray-dark);
+        }
+
+        .profile-btn:hover {
+            border-color: var(--primary-blue);
+            color: var(--primary-blue);
+        }
+
+        .logout-btn {
+            padding: 12px 16px;
+            background: #ef4444;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: background 0.2s;
+        }
+
+        .logout-btn:hover {
+            background: #dc2626;
         }
     </style>
 </head>
@@ -878,6 +1124,16 @@
         <div class="main-content">
             <div class="chat-header">
                 <h1 class="chat-title" id="chatTitle">Medical Assistant</h1>
+                <div class="header-actions">
+                    <button class="cart-btn" id="cartBtn" onclick="toggleCart()" style="display: none;">
+                        <i class="fas fa-shopping-cart"></i>
+                        <span id="cartCount">0</span>
+                    </button>
+                    <button class="user-btn" id="userBtn" onclick="toggleUserModal()">
+                        <i class="fas fa-user"></i>
+                        <span id="userBtnText">Login</span>
+                    </button>
+                </div>
             </div>
 
             <div class="chat-area">
@@ -933,6 +1189,242 @@
     </div>
 
     <script>
+        // Authentication State
+        let currentUser = null;
+        let authToken = localStorage.getItem('medai_token');
+
+        // Initialize authentication on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            if (authToken) {
+                verifyToken();
+            }
+        });
+
+        // Modal Functions
+        function toggleUserModal() {
+            const modal = document.getElementById('userModal');
+            if (currentUser) {
+                // Show user profile
+                showUserProfile();
+            } else {
+                // Show login form
+                showAuthForms();
+            }
+            modal.classList.add('show');
+        }
+
+        function closeUserModal() {
+            document.getElementById('userModal').classList.remove('show');
+        }
+
+        function showAuthTab(tab) {
+            // Update tab buttons
+            document.querySelectorAll('.auth-tab').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Hide both forms first
+            document.getElementById('loginForm').classList.add('hidden');
+            document.getElementById('registerForm').classList.add('hidden');
+            
+            // Show only the selected form
+            if (tab === 'login') {
+                document.getElementById('loginForm').classList.remove('hidden');
+            } else if (tab === 'register') {
+                document.getElementById('registerForm').classList.remove('hidden');
+            }
+        }
+
+        function showAuthForms() {
+            // Hide user profile
+            document.getElementById('userProfile').classList.add('hidden');
+            
+            // Show login form, hide register form
+            document.getElementById('loginForm').classList.remove('hidden');
+            document.getElementById('registerForm').classList.add('hidden');
+            
+            document.getElementById('modalTitle').textContent = 'Welcome to MedAI';
+            
+            // Reset active tab to login
+            document.querySelectorAll('.auth-tab').forEach(btn => btn.classList.remove('active'));
+            document.querySelector('.auth-tab').classList.add('active');
+        }
+
+        function showUserProfile() {
+            document.getElementById('loginForm').classList.add('hidden');
+            document.getElementById('registerForm').classList.add('hidden');
+            document.getElementById('userProfile').classList.remove('hidden');
+            document.getElementById('modalTitle').textContent = 'My Account';
+            
+            if (currentUser) {
+                document.getElementById('profileName').textContent = currentUser.full_name || 'User';
+                document.getElementById('profileEmail').textContent = currentUser.email;
+            }
+        }
+
+        // Authentication Functions
+        async function login() {
+            const email = document.getElementById('loginEmail').value;
+            const password = document.getElementById('loginPassword').value;
+            
+            if (!email || !password) {
+                alert('Please fill in all fields');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    authToken = data.access_token;
+                    currentUser = data.user;
+                    localStorage.setItem('medai_token', authToken);
+                    updateUserButton();
+                    clearAuthForms();
+                    closeUserModal();
+                    alert('Login successful!');
+                    loadCartCount();
+                } else {
+                    alert(data.error || 'Login failed');
+                }
+            } catch (error) {
+                alert('Login error: ' + error.message);
+            }
+        }
+
+        async function register() {
+            const email = document.getElementById('registerEmail').value;
+            const password = document.getElementById('registerPassword').value;
+            const full_name = document.getElementById('registerName').value;
+            const phone = document.getElementById('registerPhone').value;
+            
+            if (!email || !password || !full_name) {
+                alert('Please fill in required fields');
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, password, full_name, phone })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok) {
+                    authToken = data.access_token;
+                    currentUser = data.user;
+                    localStorage.setItem('medai_token', authToken);
+                    updateUserButton();
+                    clearAuthForms();
+                    closeUserModal();
+                    alert('Registration successful!');
+                    loadCartCount();
+                } else {
+                    alert(data.error || 'Registration failed');
+                }
+            } catch (error) {
+                alert('Registration error: ' + error.message);
+            }
+        }
+
+        async function verifyToken() {
+            try {
+                const response = await fetch('/api/auth/profile', {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    currentUser = data.user;
+                    updateUserButton();
+                    loadCartCount();
+                } else {
+                    logout();
+                }
+            } catch (error) {
+                logout();
+            }
+        }
+
+        function updateUserButton() {
+            const userBtn = document.getElementById('userBtn');
+            const userBtnText = document.getElementById('userBtnText');
+            const cartBtn = document.getElementById('cartBtn');
+            
+            if (currentUser) {
+                userBtn.classList.add('logged-in');
+                userBtnText.textContent = currentUser.full_name || 'User';
+                cartBtn.style.display = 'flex';
+            } else {
+                userBtn.classList.remove('logged-in');
+                userBtnText.textContent = 'Login';
+                cartBtn.style.display = 'none';
+            }
+        }
+
+        function logout() {
+            authToken = null;
+            currentUser = null;
+            localStorage.removeItem('medai_token');
+            updateUserButton();
+            clearAuthForms();
+            document.getElementById('cartCount').textContent = '0';
+            closeUserModal();
+        }
+
+        function clearAuthForms() {
+            document.getElementById('loginEmail').value = '';
+            document.getElementById('loginPassword').value = '';
+            document.getElementById('registerName').value = '';
+            document.getElementById('registerEmail').value = '';
+            document.getElementById('registerPhone').value = '';
+            document.getElementById('registerPassword').value = '';
+        }
+
+        async function loadCartCount() {
+            if (!authToken) return;
+            
+            try {
+                const response = await fetch('/api/cart', {
+                    headers: {
+                        'Authorization': `Bearer ${authToken}`
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('cartCount').textContent = data.item_count || 0;
+                }
+            } catch (error) {
+                console.error('Error loading cart count:', error);
+            }
+        }
+
+        function toggleCart() {
+            alert('Cart functionality coming in next step!');
+        }
+
+        function viewOrders() {
+            alert('Orders page coming soon!');
+        }
+
+        function viewProfile() {
+            alert('Profile editing coming soon!');
+        }
+
         // Voice input functionality
         let recognition = null;
         let isListening = false;
@@ -2151,6 +2643,71 @@
         
         // End of JavaScript
     </script>
+
+    <!-- Authentication Modal -->
+    <div class="modal-overlay" id="userModal" onclick="closeUserModal()">
+        <div class="modal-content" onclick="event.stopPropagation()">
+            <div class="modal-header">
+                <h3 id="modalTitle">Welcome to MedAI</h3>
+                <button class="modal-close" onclick="closeUserModal()">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            
+            <div class="modal-body">
+                <!-- Auth Tabs -->
+                <div class="auth-tabs">
+                    <button class="auth-tab active" onclick="showAuthTab('login')">Login</button>
+                    <button class="auth-tab" onclick="showAuthTab('register')">Register</button>
+                </div>
+                
+                <!-- Login Form -->
+                <div class="auth-form" id="loginForm">
+                    <input type="email" id="loginEmail" placeholder="Email" required>
+                    <input type="password" id="loginPassword" placeholder="Password" required>
+                    <button class="auth-btn" onclick="login()">
+                        <i class="fas fa-sign-in-alt"></i> Login
+                    </button>
+                </div>
+                
+                <!-- Register Form -->
+                <div class="auth-form hidden" id="registerForm">
+                    <input type="text" id="registerName" placeholder="Full Name" required>
+                    <input type="email" id="registerEmail" placeholder="Email" required>
+                    <input type="tel" id="registerPhone" placeholder="Phone (optional)">
+                    <input type="password" id="registerPassword" placeholder="Password" required>
+                    <button class="auth-btn" onclick="register()">
+                        <i class="fas fa-user-plus"></i> Register
+                    </button>
+                </div>
+                
+                <!-- User Profile (when logged in) -->
+                <div class="user-profile hidden" id="userProfile">
+                    <div class="profile-info">
+                        <div class="profile-avatar">
+                            <i class="fas fa-user-circle"></i>
+                        </div>
+                        <div class="profile-details">
+                            <h4 id="profileName">User Name</h4>
+                            <p id="profileEmail">user@email.com</p>
+                        </div>
+                    </div>
+                    <div class="profile-actions">
+                        <button class="profile-btn" onclick="viewOrders()">
+                            <i class="fas fa-list"></i> My Orders
+                        </button>
+                        <button class="profile-btn" onclick="viewProfile()">
+                            <i class="fas fa-user-edit"></i> Edit Profile
+                        </button>
+                        <button class="logout-btn" onclick="logout()">
+                            <i class="fas fa-sign-out-alt"></i> Logout
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
 </body>
 </html>
                     </div>

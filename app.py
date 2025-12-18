@@ -10,6 +10,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO, emit
+from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from mcp import ClientSession, StdioServerParameters
@@ -28,6 +29,10 @@ from chat_db import (
     delete_thread,
 )
 
+# E-commerce models
+from models.user import User
+from models.cart import Cart
+
 load_dotenv()
 
 # Initialize DB and cleanup old threads
@@ -41,7 +46,12 @@ PYTHON_PATH = sys.executable
 # Flask + SocketIO
 app = Flask(__name__)
 app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "medai_secret_key_2024")
+app.config["JWT_SECRET_KEY"] = os.getenv("JWT_SECRET_KEY", "medai_jwt_secret_2024")
+app.config["JWT_ACCESS_TOKEN_EXPIRES"] = False  # Never expire (or set to timedelta for specific time)
 socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Initialize JWT
+jwt = JWTManager(app)
 
 # Initialize AWS Polly client
 try:
@@ -866,6 +876,211 @@ def get_folium_map(lat, lon):
         return m._repr_html_()
     except Exception as e:
         return f"<div>Error loading map: {str(e)}</div>"
+
+# -------------------------
+# Authentication Routes
+# -------------------------
+@app.route('/api/auth/register', methods=['POST'])
+def register():
+    """User registration"""
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')
+        full_name = data.get('full_name')
+        phone = data.get('phone')
+        
+        # Validation
+        if not email or not password:
+            return jsonify({'error': 'Email and password are required'}), 400
+        
+        # Check if user exists
+        existing_user = User.find_by_email(email)
+        if existing_user:
+            return jsonify({'error': 'User already exists'}), 400
+        
+        # Create new user
+        user = User(email=email, full_name=full_name, phone=phone)
+        user.password_hash = User.hash_password(password)
+        
+        if user.save():
+            # Create access token
+            access_token = create_access_token(identity=user.user_id)
+            return jsonify({
+                'message': 'User registered successfully',
+                'access_token': access_token,
+                'user': user.to_dict()
+            }), 201
+        else:
+            return jsonify({'error': 'Registration failed'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/auth/login', methods=['POST'])
+def login():
+    """User login"""
+    try:
+        data = request.get_json()
+        email = data.get('email')
+        password = data.get('password')
+        
+        if not email or not password:
+            return jsonify({'error': 'Email and password are required'}), 400
+        
+        # Find user
+        user = User.find_by_email(email)
+        if not user or not User.check_password(password, user.password_hash):
+            return jsonify({'error': 'Invalid credentials'}), 401
+        
+        # Create access token
+        access_token = create_access_token(identity=user.user_id)
+        return jsonify({
+            'message': 'Login successful',
+            'access_token': access_token,
+            'user': user.to_dict()
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/auth/profile', methods=['GET'])
+@jwt_required()
+def get_profile():
+    """Get user profile"""
+    try:
+        user_id = get_jwt_identity()
+        user = User.find_by_id(user_id)
+        
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        
+        return jsonify({'user': user.to_dict()}), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# -------------------------
+# Cart Management Routes
+# -------------------------
+@app.route('/api/cart', methods=['GET'])
+@jwt_required()
+def get_cart():
+    """Get user's cart"""
+    try:
+        user_id = get_jwt_identity()
+        cart = Cart(user_id)
+        items = cart.get_items()
+        
+        return jsonify({
+            'items': items,
+            'total_amount': cart.total_amount,
+            'item_count': cart.get_item_count()
+        }), 200
+        
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/cart/add', methods=['POST'])
+@jwt_required()
+def add_to_cart_api():
+    """Add item to cart"""
+    try:
+        user_id = get_jwt_identity()
+        data = request.get_json()
+        
+        medicine_id = data.get('medicine_id')
+        store_id = data.get('store_id')
+        quantity = data.get('quantity', 1)
+        unit_price = data.get('unit_price')
+        
+        if not all([medicine_id, store_id, unit_price]):
+            return jsonify({'error': 'Missing required fields'}), 400
+        
+        cart = Cart(user_id)
+        if cart.add_item(medicine_id, store_id, quantity, unit_price):
+            return jsonify({'message': 'Item added to cart'}), 200
+        else:
+            return jsonify({'error': 'Failed to add item'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/cart/update', methods=['PUT'])
+@jwt_required()
+def update_cart_item():
+    """Update cart item quantity"""
+    try:
+        data = request.get_json()
+        item_id = data.get('item_id')
+        quantity = data.get('quantity')
+        
+        if not item_id or quantity is None:
+            return jsonify({'error': 'Item ID and quantity required'}), 400
+        
+        user_id = get_jwt_identity()
+        cart = Cart(user_id)
+        
+        if cart.update_quantity(item_id, quantity):
+            return jsonify({'message': 'Cart updated'}), 200
+        else:
+            return jsonify({'error': 'Failed to update cart'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/cart/remove', methods=['DELETE'])
+@jwt_required()
+def remove_from_cart():
+    """Remove item from cart"""
+    try:
+        data = request.get_json()
+        item_id = data.get('item_id')
+        
+        if not item_id:
+            return jsonify({'error': 'Item ID required'}), 400
+        
+        user_id = get_jwt_identity()
+        cart = Cart(user_id)
+        
+        if cart.remove_item(item_id):
+            return jsonify({'message': 'Item removed'}), 200
+        else:
+            return jsonify({'error': 'Failed to remove item'}), 500
+            
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+# -------------------------
+# Enhanced SocketIO Handlers for E-commerce
+# -------------------------
+@socketio.on("add_to_cart")
+def handle_add_to_cart_socket(data):
+    """Add item to cart via SocketIO (for logged-in users)"""
+    try:
+        # For now, we'll use session-based cart for non-authenticated users
+        # In production, you'd want to require authentication
+        
+        medicine_id = data.get("medicine_id")
+        store_id = data.get("store_id")
+        quantity = data.get("quantity", 1)
+        unit_price = data.get("unit_price")
+        medicine_name = data.get("medicine_name", "Unknown Medicine")
+        store_name = data.get("store_name", "Unknown Store")
+        
+        # For demo purposes, we'll emit success
+        # In production, integrate with user authentication
+        emit("cart_updated", {
+            "success": True,
+            "message": f"Added {medicine_name} to cart",
+            "item_count": 1  # This would be actual count from database
+        })
+        
+    except Exception as e:
+        emit("cart_updated", {
+            "success": False,
+            "error": str(e)
+        })
 
 if __name__ == "__main__":
     print("Starting MedAI on http://localhost:5000")
