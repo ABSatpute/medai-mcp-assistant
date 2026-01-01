@@ -15,9 +15,12 @@ Tables:
 1. medicines
    - medicine_id (INT, PRIMARY KEY)
    - medicine_name (VARCHAR)
+   - medicine_type (ENUM: 'tablet','syrup','capsule','injection','other')
    - brand_name (VARCHAR)
    - description (TEXT)
    - price (DECIMAL)
+   - created_at (TIMESTAMP)
+   - pack_size (INT)
 
 2. medical_stores
    - store_id (INT, PRIMARY KEY)
@@ -56,6 +59,7 @@ async def list_tools() -> list[Tool]:
 @app.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     from decimal import Decimal
+    from datetime import datetime
     
     if name == "execute_sql":
         sql_query = arguments["sql_query"]
@@ -68,11 +72,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             if not rows:
                 return [TextContent(type="text", text="No results found")]
             
-            # Convert Decimal to float
+            # Convert Decimal and datetime to JSON serializable types
             for row in rows:
                 for key, value in row.items():
                     if isinstance(value, Decimal):
                         row[key] = float(value)
+                    elif isinstance(value, datetime):
+                        row[key] = value.isoformat()
             
             return [TextContent(type="text", text=json.dumps(rows, indent=2))]
         except Exception as e:

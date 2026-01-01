@@ -1162,6 +1162,10 @@
 
                 <div class="input-area">
                     <div class="input-container">
+                        <!-- Hidden dummy inputs to confuse autofill -->
+                        <input type="text" style="display:none">
+                        <input type="password" style="display:none">
+                        
                         <input type="file" id="imageInput" accept="image/*" style="display: none;" onchange="handleImageUpload(event)">
                         
                         <button class="upload-btn" onclick="document.getElementById('imageInput').click()">
@@ -1174,6 +1178,12 @@
                             class="message-input"
                             placeholder="Ask about medicines, stores, or health..."
                             onkeypress="handleKeyPress(event)"
+                            autocomplete="new-password"
+                            autocorrect="off"
+                            autocapitalize="off"
+                            spellcheck="false"
+                            name="message-input-unique"
+                            data-form-type="other"
                         >
                         
                         <button class="voice-btn" onclick="toggleVoiceInput()" id="voiceBtn">
@@ -2826,6 +2836,22 @@
             initSidebar();
             loadChatThreads(); // Load existing threads with new styling
             newChat(); // Start with a new chat
+            
+            // Clear message input on page load (prevent autofill)
+            const messageInput = document.getElementById('messageInput');
+            if (messageInput) {
+                messageInput.value = '';
+                messageInput.setAttribute('readonly', true);
+                // Force clear after delays to override autofill
+                setTimeout(() => {
+                    messageInput.value = '';
+                    messageInput.removeAttribute('readonly');
+                }, 500);
+                setTimeout(() => {
+                    messageInput.value = '';
+                }, 1000);
+            }
+            
             // Enable thread loading with error handling
             try {
                 loadChatThreads();
@@ -3241,57 +3267,93 @@
                 welcomeSection.style.display = 'none';
             }
             
-            // Create message element
-            const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${role}`;
+            // If there's both image and text, create two separate messages
+            if (imageData && content && content.trim() && content !== "📷 Uploaded prescription image") {
+                // First add image message (no avatar)
+                const imageDiv = document.createElement('div');
+                imageDiv.className = `message ${role}`;
+                
+                imageDiv.innerHTML = `
+                    <div class="message-content" style="margin-left: 0;">
+                        <img src="${imageData}" alt="Uploaded prescription" style="max-width: 300px; max-height: 300px; border-radius: 4px; margin: 5px 0; display: block;">
+                    </div>
+                `;
+                messagesContainer.appendChild(imageDiv);
+                
+                // Then add text message (with avatar)
+                const textDiv = document.createElement('div');
+                textDiv.className = `message ${role}`;
+                
+                const avatar = role === 'user' ? 
+                    '<i class="fas fa-user"></i>' : 
+                    '<i class="fas fa-robot"></i>';
+                
+                textDiv.innerHTML = `
+                    <div class="message-avatar">${avatar}</div>
+                    <div class="message-content">
+                        ${formatMessageContent(content)}
+                    </div>
+                `;
+                messagesContainer.appendChild(textDiv);
+            } else {
+                // Single message (text only or image only)
+                const messageDiv = document.createElement('div');
+                messageDiv.className = `message ${role}`;
+                
+                const avatar = role === 'user' ? 
+                    '<i class="fas fa-user"></i>' : 
+                    '<i class="fas fa-robot"></i>';
+                
+                const formattedContent = formatMessageContent(content, imageData);
+                
+                messageDiv.innerHTML = `
+                    <div class="message-avatar">${avatar}</div>
+                    <div class="message-content">
+                        ${formattedContent}
+                    </div>
+                `;
+                messagesContainer.appendChild(messageDiv);
+            }
             
-            const avatar = role === 'user' ? 
-                '<i class="fas fa-user"></i>' : 
-                '<i class="fas fa-robot"></i>';
-            
-            // Format content for better display
-            const formattedContent = formatMessageContent(content, imageData);
-            
-            messageDiv.innerHTML = `
-                <div class="message-avatar">${avatar}</div>
-                <div class="message-content">
-                    ${formattedContent}
-                </div>
-            `;
-            
-            messagesContainer.appendChild(messageDiv);
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
         function formatMessageContent(content, imageData = null) {
-            // If image data is provided, display the image instead of text
-            if (imageData) {
-                return `<img src="${imageData}" alt="Uploaded prescription" style="max-width: 300px; max-height: 300px; border-radius: 8px; margin: 5px 0;">`;
+            let formattedText = '';
+            
+            // Format text content if it exists
+            if (content && content.trim()) {
+                // Remove context messages from display (but keep in conversation history)
+                let displayContent = content.replace(/\[Context:.*?\]/g, '').trim();
+                
+                // Convert markdown-like formatting to HTML
+                formattedText = displayContent
+                    // Bold text: **text** -> <strong>text</strong>
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    // Italic text: *text* -> <em>text</em>
+                    .replace(/\*(.*?)\*/g, '<em>$1</em>')
+                    // Code: `text` -> <code>text</code>
+                    .replace(/`(.*?)`/g, '<code>$1</code>')
+                    // Line breaks: \n -> <br>
+                    .replace(/\n/g, '<br>')
+                    // Headers: ### text -> <h3>text</h3>
+                    .replace(/^### (.*$)/gm, '<h3>$1</h3>')
+                    .replace(/^## (.*$)/gm, '<h2>$1</h2>')
+                    .replace(/^# (.*$)/gm, '<h1>$1</h1>')
+                    // Lists: - item -> <li>item</li>
+                    .replace(/^- (.*$)/gm, '<li>$1</li>')
+                    // Wrap consecutive <li> items in <ul>
+                    .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+                    // Fix nested ul tags
+                    .replace(/<\/ul>\s*<ul>/g, '');
             }
             
-            // Remove context messages from display (but keep in conversation history)
-            let displayContent = content.replace(/\[Context:.*?\]/g, '').trim();
+            // For single image message
+            if (imageData && !formattedText) {
+                return `<img src="${imageData}" alt="Uploaded prescription" style="max-width: 300px; max-height: 300px; border-radius: 4px; margin: 5px 0; display: block;">`;
+            }
             
-            // Convert markdown-like formatting to HTML
-            let formatted = displayContent
-                // Bold text: **text** -> <strong>text</strong>
-                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-                // Italic text: *text* -> <em>text</em>
-                .replace(/\*(.*?)\*/g, '<em>$1</em>')
-                // Code: `text` -> <code>text</code>
-                .replace(/`(.*?)`/g, '<code>$1</code>')
-                // Line breaks: \n -> <br>
-                .replace(/\n/g, '<br>')
-                // Headers: ### text -> <h3>text</h3>
-                .replace(/^### (.*$)/gm, '<h3>$1</h3>')
-                .replace(/^## (.*$)/gm, '<h2>$1</h2>')
-                .replace(/^# (.*$)/gm, '<h1>$1</h1>')
-                // Lists: - item -> <li>item</li>
-                .replace(/^- (.*$)/gm, '<li>$1</li>')
-                // Wrap consecutive <li> items in <ul>
-                .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
-                // Fix nested ul tags
-                .replace(/<\/ul>\s*<ul>/g, '');
+            return formattedText;
 
             return formatted;
         }
@@ -3320,7 +3382,7 @@
             const input = document.getElementById('messageInput');
             const message = input.value.trim();
             
-            if (!message) return;
+            if (!message && !selectedImage) return;
             
             // Store current input method for voice control
             currentInputMethod = inputMethod;
@@ -3330,11 +3392,17 @@
             socket.emit('send_message', {
                 thread_id: currentThreadId,
                 message: message,
-                location: null,
-                input_method: inputMethod
+                image: selectedImage,
+                location: userLocation,
+                input_method: selectedImage ? 'image' : inputMethod
             });
             
             input.value = '';
+            
+            // Clear selected image after sending
+            if (selectedImage) {
+                removeImage();
+            }
             
             // Hide welcome section
             const welcomeSection = document.getElementById('welcomeSection');
@@ -3364,24 +3432,52 @@
             }
         }
         
+        let selectedImage = null;
+        
         function handleImageUpload(event) {
             const file = event.target.files[0];
             if (file) {
-                // Set input method for voice control
                 currentInputMethod = 'image';
                 
                 const reader = new FileReader();
                 reader.onload = function(e) {
-                    socket.emit('send_message', {
-                        thread_id: currentThreadId,
-                        message: '',
-                        image: e.target.result,
-                        location: null,
-                        input_method: 'image'
-                    });
+                    selectedImage = e.target.result;
+                    showImagePreview(file.name);
                 };
                 reader.readAsDataURL(file);
             }
+        }
+        
+        function showImagePreview(fileName) {
+            const inputContainer = document.querySelector('.input-container');
+            
+            // Remove existing preview
+            const existingPreview = document.getElementById('imagePreview');
+            if (existingPreview) {
+                existingPreview.remove();
+            }
+            
+            // Add image preview above input
+            const previewHTML = `
+                <div id="imagePreview" style="display: flex; align-items: center; padding: 10px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; margin-bottom: 10px;">
+                    <img src="${selectedImage}" style="width: 50px; height: 50px; object-fit: cover; border-radius: 6px; margin-right: 12px;">
+                    <span style="flex: 1; color: #64748b; font-size: 14px;">📄 ${fileName}</span>
+                    <button onclick="removeImage()" style="background: none; border: none; color: #ef4444; cursor: pointer; font-size: 18px;">&times;</button>
+                </div>
+            `;
+            inputContainer.insertAdjacentHTML('beforebegin', previewHTML);
+            
+            // Focus on message input
+            document.getElementById('messageInput').focus();
+        }
+        
+        function removeImage() {
+            selectedImage = null;
+            const preview = document.getElementById('imagePreview');
+            if (preview) {
+                preview.remove();
+            }
+            document.getElementById('imageInput').value = '';
         }
         
         // End of JavaScript
@@ -3432,7 +3528,7 @@
                         </div>
                         <div class="profile-details">
                             <h4 id="profileName">User Name</h4>
-                            <p id="profileEmail">user@email.com</p>
+                            <p id="profileEmail"></p>
                         </div>
                     </div>
                     <div class="profile-actions">

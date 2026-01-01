@@ -13,7 +13,7 @@ from flask_socketio import SocketIO, emit
 from flask_jwt_extended import JWTManager, jwt_required, create_access_token, get_jwt_identity
 import razorpay
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 import boto3
@@ -300,6 +300,8 @@ async def process_query(query: str, image_base64: str = None, conversation_histo
     Advanced decision-making pipeline. This is the canonical production logic.
     Returns (assistant_text_response, raw_tool_result_or_none)
     """
+    import re
+    
     # Force certain direct actions if query contains explicit phrases
     if "Find medicines near me" in query or re.search(r"\b(find|search)\b.*\bmedicine(s)?\b", query, re.IGNORECASE) and "near" in query:
         sql = (
@@ -331,14 +333,20 @@ async def process_query(query: str, image_base64: str = None, conversation_histo
     context = ""
     if conversation_history:
         recent = conversation_history[-3:] if len(conversation_history) > 3 else conversation_history
-        context = "\n".join([f"{m['role']}: {m['content'][:200]}" for m in recent])
+        # Preserve full context for prescription information, truncate others
+        context_parts = []
+        for m in recent:
+            content = m['content']
+            # Keep full content if it contains prescription info
+            if "Prescription contains:" in content or "found **" in content:
+                context_parts.append(f"{m['role']}: {content}")
+            else:
+                context_parts.append(f"{m['role']}: {content[:200]}")
+        context = "\n".join(context_parts)
 
     location_info = f"User Location: {user_location.get('latitude')}, {user_location.get('longitude')}" if user_location else "User location not available"
 
     system_prompt = f"""You are MedAI, an intelligent medical assistant with advanced contextual understanding.
-
-CONVERSATION CONTEXT:
-{context}
 
 USER LOCATION: {location_info}
 
@@ -369,7 +377,12 @@ CONTEXTUAL REFERENCES:
    - "find [medicine]", "availability", "price", "stock" → execute_sql
    - "availability of that" + context has medicine → execute_sql with context medicine
 
-3. LOCATION QUERIES:
+3. ALTERNATIVE MEDICINE QUERIES:
+   - "alternatives", "similar medicines", "generic versions" → Suggest alternatives using medical knowledge, then ASK PERMISSION
+   - "check availability" (after alternatives suggested) → Check availability of previously suggested alternatives
+   - DO NOT automatically check database - always ask user permission first
+
+4. LOCATION QUERIES:
    - "nearby stores", "pharmacies", "medical stores", "store locator" → get_nearby_stores
    - "stores for [medicine]" → execute_sql (include store info)
 
@@ -390,20 +403,40 @@ Context: Previous mention of "Crocin"
 User: "find availability of that"
 → {{"use_tool": true, "tool": "execute_sql", "arguments": {{"sql_query": "SELECT m.medicine_name, m.price, ms.store_name, ss.stock_quantity FROM medicines m JOIN store_stock ss ON m.medicine_id = ss.medicine_id JOIN medical_stores ms ON ss.store_id = ms.store_id WHERE m.medicine_name LIKE '%Crocin%' AND ss.stock_quantity > 0"}}}}
 
+User: "suggest alternatives for Remdesivir"
+→ {{"use_tool": false, "answer": "Based on medical knowledge, alternatives to Remdesivir could include:\n• Favipiravir\n• Molnupiravir\n• Paxlovid\n\nWould you like me to check which of these are available in our store?"}}
+
+User: "yes, check availability" (after seeing alternatives)
+→ {{"use_tool": true, "tool": "execute_sql", "arguments": {{"sql_query": "SELECT m.medicine_name, m.price, ms.store_name, ss.stock_quantity FROM medicines m JOIN store_stock ss ON m.medicine_id = ss.medicine_id JOIN medical_stores ms ON ss.store_id = ms.store_id WHERE (m.medicine_name LIKE '%Favipiravir%' OR m.medicine_name LIKE '%Molnupiravir%' OR m.medicine_name LIKE '%Paxlovid%') AND ss.stock_quantity > 0"}}}}
+
 Always end medical responses with: "Always consult your doctor for medical advice."
 """
 
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
-    messages = [SystemMessage(content=system_prompt), HumanMessage(content=query)]
+    
+    # Build full conversation history for LLM
+    messages = [SystemMessage(content=system_prompt)]
+    
+    # Add full conversation history
+    if conversation_history:
+        for msg in conversation_history:
+            if msg['role'] == 'user':
+                messages.append(HumanMessage(content=msg['content']))
+            elif msg['role'] == 'assistant':
+                messages.append(AIMessage(content=msg['content']))
+    
+    # Add current query
+    messages.append(HumanMessage(content=query))
+    
     response = llm.invoke(messages)
 
     cleaned = _clean_llm_json_response(response.content)
     try:
         decision = json.loads(cleaned)
-        print(f"🤖 DEBUG - LLM Decision: {decision}")  # Debug what LLM decided
+        print(f"DEBUG - LLM Decision: {decision}")  # Debug what LLM decided
     except Exception:
         # LLM didn't return JSON -> treat as plain answer
-        print(f"🤖 DEBUG - LLM returned plain text: {response.content[:100]}...")  # Debug non-JSON response
+        print(f"DEBUG - LLM returned plain text: {response.content[:100]}...")  # Debug non-JSON response
         return response.content, None
 
     if decision.get("use_tool"):
@@ -421,13 +454,43 @@ Always end medical responses with: "Always consult your doctor for medical advic
         result = await call_mcp_tool(server_name, tool_name, arguments)
         
         # DEBUG: Print what MCP tool returned
-        print(f"🔍 DEBUG - MCP Tool Result: {result}")
+        print(f"DEBUG - MCP Tool Result: {result}")
+
+        # Extract medicine names from the SQL query for better response formatting
+        medicine_names = []
+        if "sql_query" in arguments:
+            sql = arguments["sql_query"]
+            # Extract medicine names from LIKE clauses or IN clauses
+            import re
+            # Try LIKE pattern first
+            likes = re.findall(r"LIKE '%([^%]+)%'", sql)
+            if likes:
+                medicine_names = likes
+            else:
+                # Try IN pattern
+                in_match = re.search(r"IN \(([^)]+)\)", sql)
+                if in_match:
+                    # Extract quoted values
+                    quoted_values = re.findall(r"'([^']+)'", in_match.group(1))
+                    medicine_names = quoted_values
 
         # Format for user
         format_prompt = f"""User asked: "{query}"
 Database result: {result}
+Searched medicines: {', '.join(medicine_names) if medicine_names else 'Not specified'}
 
-As a medical store expert, provide a natural, helpful response based on the user's question and the database results. Don't just show raw data - explain it conversationally. End with: 'Always consult your doctor for medical advice.'"""
+If the database result shows "No results found":
+1. Specifically mention which medicines are not available: {', '.join(medicine_names) if medicine_names else 'the requested medicines'}
+2. Offer practical next steps:
+   - "Would you like me to check if we can order these for you?"
+   - "I can help you find contact information for our pharmacy team"
+3. DO NOT suggest more alternatives - user already received alternatives
+4. Be specific and solution-oriented
+
+If results are found:
+- Provide clear availability with store details and prices
+
+Always end with: 'Always consult your doctor for medical advice.'"""
         format_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
         formatted_response = format_llm.invoke([HumanMessage(content=format_prompt)])
         return formatted_response.content, result
@@ -668,12 +731,20 @@ def handle_message(data):
         pass
 
     # Emit back user message (so UI shows it immediately)
-    message_data = {"role": "user", "content": message or "📷 Uploaded prescription image", "timestamp": timestamp}
-    if image_data:
-        message_data["image"] = image_data
+    if message.strip() and image_data:
+        # Both text and image
+        message_content = message
+        message_data = {"role": "user", "content": message_content, "timestamp": timestamp, "image": image_data}
+    elif image_data:
+        # Image only
+        message_data = {"role": "user", "content": "📷 Uploaded prescription image", "timestamp": timestamp, "image": image_data}
+    else:
+        # Text only
+        message_data = {"role": "user", "content": message, "timestamp": timestamp}
+    
     emit("message_received", message_data)
 
-    # PROCESS: image or text
+    # PROCESS: image and/or text
     try:
         conversation_history = load_messages(thread_id)
         raw_data = None
@@ -683,21 +754,36 @@ def handle_message(data):
             # Extract base64 portion
             image_base64 = image_data.split(",", 1)[1] if "," in image_data else image_data
             prescription_data = analyze_prescription_image(image_base64)
+            
             if prescription_data.get("medicines"):
                 meds = prescription_data["medicines"]
                 med_list = ", ".join(meds)
-                assistant_response = (
-                    f"I've analyzed your prescription and found **{med_list}**. "
-                    "How can I help you with these medicines? I can check availability, find nearby stores, or provide information about them. "
-                    "Always consult your doctor for medical advice.\n\n"
-                    f"[Context: Prescription contains: {med_list}]"
-                )
+                
+                # If user also sent a text message, process it with prescription context
+                if message.strip():
+                    # Create enhanced context with prescription info
+                    prescription_context = f"[Prescription Analysis: Found medicines: {med_list}]"
+                    enhanced_message = f"{message}\n\n{prescription_context}"
+                    
+                    # Process the user's text instruction with prescription context
+                    assistant_response, raw_data = asyncio.run(
+                        process_query(enhanced_message, None, conversation_history, user_location)
+                    )
+                else:
+                    # No text message, use default prescription response
+                    assistant_response = (
+                        f"I've analyzed your prescription and found **{med_list}**. "
+                        "How can I help you with these medicines? I can check availability, find nearby stores, or provide information about them. "
+                        "Always consult your doctor for medical advice.\n\n"
+                        f"[Context: Prescription contains: {med_list}]"
+                    )
+                
                 # Persist prescription analysis as assistant message
                 raw_data = json.dumps(prescription_data)
             else:
                 assistant_response = "I couldn't identify medicines in this image. Please upload a clearer prescription image."
         else:
-            # Run the async process_query synchronously here
+            # Text only - process normally
             assistant_response, raw_data = asyncio.run(
                 process_query(message, None, conversation_history, user_location)
             )
