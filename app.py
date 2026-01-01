@@ -909,27 +909,27 @@ def get_route(user_lat, user_lon, store_lat, store_lon):
                 distance = route_data['routes'][0]['distance'] / 1000  # km
                 duration = route_data['routes'][0]['duration'] / 60    # minutes
                 
-                return {
+                return jsonify({
                     "success": True,
                     "route": route_coords,
                     "distance": round(distance, 1),
                     "duration": round(duration)
-                }
+                })
         
-        return {"success": False, "error": "No route found"}
+        return jsonify({"success": False, "error": "No route found"})
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        return jsonify({"success": False, "error": str(e)})
 
 @app.route("/api/map/<float:lat>/<float:lon>")
 def get_folium_map(lat, lon):
-    """Generate simple Folium map HTML for popup"""
+    """Generate simple Folium map with click-to-show routes"""
     try:
         import folium
         
         # Create simple map
         m = folium.Map(location=[lat, lon], zoom_start=13)
         
-        # Add user marker with different style
+        # Add user marker
         folium.Marker(
             [lat, lon], 
             popup="📍 Your Location",
@@ -943,33 +943,185 @@ def get_folium_map(lat, lon):
             "limit": 5
         }))
         
-        # Add store markers with detailed popups
+        # Add store markers with direct click-to-route
         if result and result.startswith('['):
             stores = json.loads(result)
-            for store in stores:
+            route_colors = ['#2563eb', '#dc2626', '#059669', '#7c3aed', '#ea580c']
+            
+            for i, store in enumerate(stores):
+                color = route_colors[i % len(route_colors)]
+                
+                # Store marker popup (for hover info only)
                 popup_html = f"""
-                <div style="min-width: 200px;">
-                    <h4 style="margin: 0 0 8px 0; color: #1e293b;">{store['store_name']}</h4>
-                    <p style="margin: 4px 0; color: #64748b; font-size: 12px;">
-                        📍 {store.get('address', 'Address not available')}
-                    </p>
-                    <p style="margin: 4px 0; color: #64748b; font-size: 12px;">
-                        📞 {store.get('phone_number', 'Phone not available')}
-                    </p>
-                    <p style="margin: 4px 0; color: #2563eb; font-weight: 600; font-size: 12px;">
-                        📏 {store['distance']:.2f} km away
-                    </p>
+                <div style="min-width: 220px; font-family: 'Segoe UI', sans-serif;">
+                    <div style="border-bottom: 2px solid {color}; padding-bottom: 8px; margin-bottom: 12px;">
+                        <h4 style="margin: 0; color: #1e293b; font-size: 16px; font-weight: 600;">{store['store_name']}</h4>
+                    </div>
+                    <div style="margin-bottom: 8px;">
+                        <p style="margin: 0; color: #64748b; font-size: 13px; line-height: 1.4;">
+                            <span style="color: {color};">📍</span> {store.get('address', 'Address not available')}
+                        </p>
+                    </div>
+                    <div style="margin-bottom: 8px;">
+                        <p style="margin: 0; color: #64748b; font-size: 13px;">
+                            <span style="color: #10b981;">📞</span> {store.get('phone_number', 'Phone not available')}
+                        </p>
+                    </div>
+                    <div style="background: {color}15; border: 1px solid {color}; padding: 8px; border-radius: 6px;">
+                        <p style="margin: 0; color: {color}; font-weight: 600; font-size: 13px;">
+                            <span style="color: #f59e0b;">📏</span> {store['distance']:.2f} km away
+                        </p>
+                        <p style="margin: 4px 0 0 0; color: #64748b; font-size: 11px; font-style: italic;">
+                            Click marker to show route
+                        </p>
+                    </div>
                 </div>
                 """
                 
                 folium.Marker(
                     [store['latitude'], store['longitude']], 
-                    popup=folium.Popup(popup_html, max_width=250),
-                    tooltip=store['store_name'],
+                    popup=folium.Popup(popup_html, max_width=280),
+                    tooltip=f"🏥 {store['store_name']} ({store['distance']:.1f}km) - Click for route",
                     icon=folium.Icon(color='blue', icon='plus', prefix='fa')
                 ).add_to(m)
         
-        return m._repr_html_()
+        # Get the HTML and inject JavaScript
+        html_content = m._repr_html_()
+        
+        # Add route handling JavaScript with store data
+        if result and result.startswith('['):
+            stores = json.loads(result)
+            stores_js = json.dumps([{
+                'lat': store['latitude'],
+                'lon': store['longitude'], 
+                'name': store['store_name'],
+                'color': route_colors[i % len(route_colors)]
+            } for i, store in enumerate(stores)])
+            
+            route_script = f"""
+            <script>
+                var currentRouteLayer = null;
+                var storeData = {stores_js};
+                var userLat = {lat};
+                var userLon = {lon};
+                
+                function showRouteToStore(storeLat, storeLon, storeName, color) {{
+                    // Get the map instance
+                    var mapElement = document.querySelector('.folium-map');
+                    if (!mapElement) return;
+                    
+                    var mapId = mapElement.id;
+                    var mapInstance = window[mapId];
+                    
+                    if (!mapInstance) return;
+                    
+                    // Clear existing route
+                    if (currentRouteLayer) {{
+                        mapInstance.removeLayer(currentRouteLayer);
+                        currentRouteLayer = null;
+                    }}
+                    
+                    // Fetch route from OSRM
+                    fetch('http://router.project-osrm.org/route/v1/driving/' + userLon + ',' + userLat + ';' + storeLon + ',' + storeLat + '?overview=full&geometries=geojson')
+                        .then(response => response.json())
+                        .then(data => {{
+                            if (data.routes && data.routes[0]) {{
+                                var coords = data.routes[0].geometry.coordinates;
+                                var routeCoords = coords.map(function(c) {{ return [c[1], c[0]]; }});
+                                
+                                // Add route to map
+                                currentRouteLayer = L.polyline(routeCoords, {{
+                                    color: color,
+                                    weight: 4,
+                                    opacity: 0.8
+                                }}).addTo(mapInstance);
+                                
+                                // Show route info
+                                var distance = (data.routes[0].distance / 1000).toFixed(1);
+                                var duration = Math.round(data.routes[0].duration / 60);
+                                
+                                currentRouteLayer.bindPopup(
+                                    '<div style="text-align: center; font-family: Segoe UI, sans-serif;">' +
+                                    '<h4 style="margin: 0 0 8px 0; color: ' + color + ';">Route to ' + storeName + '</h4>' +
+                                    '<p style="margin: 0; font-size: 13px;">🗺️ ' + distance + 'km, ' + duration + 'min drive</p>' +
+                                    '</div>'
+                                );
+                                
+                                // Fit map to show route
+                                mapInstance.fitBounds(currentRouteLayer.getBounds(), {{padding: [20, 20]}});
+                                
+                                console.log('Route displayed for:', storeName);
+                            }}
+                        }})
+                        .catch(function(error) {{
+                            console.error('Route error:', error);
+                            alert('Could not load route. Please try again.');
+                        }});
+                }}
+                
+                // Add click events to markers after map loads
+                function addMarkerClickEvents() {{
+                    var mapElement = document.querySelector('.folium-map');
+                    if (!mapElement) return;
+                    
+                    var mapId = mapElement.id;
+                    var mapInstance = window[mapId];
+                    
+                    if (!mapInstance) return;
+                    
+                    // Find all markers and add click events
+                    mapInstance.eachLayer(function(layer) {{
+                        if (layer instanceof L.Marker && layer.options.icon.options.icon === 'plus') {{
+                            var markerPos = layer.getLatLng();
+                            
+                            // Find matching store data
+                            var storeInfo = storeData.find(function(store) {{
+                                return Math.abs(store.lat - markerPos.lat) < 0.001 && 
+                                       Math.abs(store.lon - markerPos.lng) < 0.001;
+                            }});
+                            
+                            if (storeInfo) {{
+                                layer.off('click'); // Remove existing click events
+                                layer.on('click', function(e) {{
+                                    e.originalEvent.stopPropagation();
+                                    showRouteToStore(storeInfo.lat, storeInfo.lon, storeInfo.name, storeInfo.color);
+                                }});
+                            }}
+                        }}
+                    }});
+                    
+                    console.log('Direct click events added to store markers');
+                }}
+                
+                // Initialize when DOM is ready
+                document.addEventListener('DOMContentLoaded', function() {{
+                    setTimeout(function() {{
+                        addMarkerClickEvents();
+                        
+                        // Auto-show route to nearest store (first in list)
+                        if (storeData.length > 0) {{
+                            var nearestStore = storeData[0];
+                            showRouteToStore(nearestStore.lat, nearestStore.lon, nearestStore.name, nearestStore.color);
+                            console.log('Auto-displayed route to nearest store:', nearestStore.name);
+                        }}
+                        
+                        console.log('Direct click-to-route system initialized');
+                    }}, 1500);
+                }});
+            </script>
+            """
+        else:
+            route_script = ""
+        
+        # Insert script into the HTML
+        if '</body>' in html_content:
+            html_content = html_content.replace('</body>', route_script + '</body>')
+        elif '&lt;/body&gt;' in html_content:
+            # Handle iframe srcdoc encoding
+            encoded_script = route_script.replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').replace("'", '&#x27;')
+            html_content = html_content.replace('&lt;/body&gt;', encoded_script + '&lt;/body&gt;')
+        
+        return html_content
     except Exception as e:
         return f"<div>Error loading map: {str(e)}</div>"
 
