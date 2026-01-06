@@ -20,7 +20,7 @@ async def list_tools() -> list[Tool]:
     return [
         Tool(
             name="get_nearby_stores",
-            description="Get nearby medical stores with coordinates for map display",
+            description="Get nearby medical stores with coordinates for map display, optionally filtered by medicine availability",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -35,6 +35,10 @@ async def list_tools() -> list[Tool]:
                     "limit": {
                         "type": "integer",
                         "description": "Number of stores to return (default: 10)"
+                    },
+                    "medicine_filter": {
+                        "type": "string",
+                        "description": "Optional: Filter stores that have this medicine in stock"
                     }
                 }
             }
@@ -47,26 +51,51 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         lat = arguments.get("latitude", 18.558091)
         lon = arguments.get("longitude", 73.793439)
         limit = arguments.get("limit", 10)
+        medicine_filter = arguments.get("medicine_filter")
         
-        # DEBUG: Print received location
-        # print(f"MAP SERVER DEBUG:")
         print(f"   Received latitude: {lat}")
         print(f"   Received longitude: {lon}")
         print(f"   Limit: {limit}")
+        print(f"   Medicine filter: {medicine_filter}")
         
-        query = text("""
-            SELECT store_id, store_name, address, phone_number, latitude, longitude,
-                   (6371 * acos(cos(radians(:lat)) * cos(radians(latitude)) * 
-                   cos(radians(longitude) - radians(:lon)) + sin(radians(:lat)) * 
-                   sin(radians(latitude)))) AS distance
-            FROM medical_stores
-            ORDER BY distance
-            LIMIT :limit
-        """)
-        
-        with engine.connect() as conn:
-            result = conn.execute(query, {"lat": lat, "lon": lon, "limit": limit})
-            rows = [dict(row._mapping) for row in result]
+        if medicine_filter:
+            # Query stores that have the specific medicine in stock
+            query = text("""
+                SELECT DISTINCT ms.store_id, ms.store_name, ms.address, ms.phone_number, 
+                       ms.latitude, ms.longitude,
+                       (6371 * acos(cos(radians(:lat)) * cos(radians(ms.latitude)) * 
+                       cos(radians(ms.longitude) - radians(:lon)) + sin(radians(:lat)) * 
+                       sin(radians(ms.latitude)))) AS distance,
+                       m.medicine_name, m.price, ss.stock_quantity
+                FROM medical_stores ms
+                JOIN store_stock ss ON ms.store_id = ss.store_id
+                JOIN medicines m ON ss.medicine_id = m.medicine_id
+                WHERE m.medicine_name LIKE :medicine AND ss.stock_quantity > 0
+                ORDER BY distance
+                LIMIT :limit
+            """)
+            
+            with engine.connect() as conn:
+                result = conn.execute(query, {
+                    "lat": lat, "lon": lon, "limit": limit, 
+                    "medicine": f"%{medicine_filter}%"
+                })
+                rows = [dict(row._mapping) for row in result]
+        else:
+            # Query all nearby stores
+            query = text("""
+                SELECT store_id, store_name, address, phone_number, latitude, longitude,
+                       (6371 * acos(cos(radians(:lat)) * cos(radians(latitude)) * 
+                       cos(radians(longitude) - radians(:lon)) + sin(radians(:lat)) * 
+                       sin(radians(latitude)))) AS distance
+                FROM medical_stores
+                ORDER BY distance
+                LIMIT :limit
+            """)
+            
+            with engine.connect() as conn:
+                result = conn.execute(query, {"lat": lat, "lon": lon, "limit": limit})
+                rows = [dict(row._mapping) for row in result]
         
         print(f"   Found {len(rows)} stores")
         if rows:

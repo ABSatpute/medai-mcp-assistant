@@ -1,0 +1,51 @@
+# Core Web Framework
+Flask==2.3.3
+Flask-SocketIO==5.3.6
+python-socketio==5.9.0
+python-engineio==4.7.1
+
+# Authentication & Security
+Flask-JWT-Extended==4.6.0
+PyJWT>=2.10.1
+bcrypt==4.1.2
+
+# Payment Processing
+razorpay==1.4.1
+
+# AWS Services
+boto3>=1.26.0
+botocore>=1.29.0
+
+# AI & Language Models
+langchain>=0.1.0
+langchain-core>=0.2.0
+langchain-openai>=0.1.0
+openai>=1.0.0
+
+# MCP (Model Context Protocol)
+mcp>=1.0.0
+
+# Database
+SQLAlchemy>=2.0.0
+PyMySQL>=1.1.0
+mysql-connector-python>=8.0.0
+
+# Environment & Configuration
+python-dotenv>=1.0.0
+
+# Data Processing
+pandas>=2.0.0
+numpy>=1.23.0
+
+# Maps & Location
+folium>=0.14.0
+geopy>=2.3.0
+
+# Image Processing
+Pillow>=10.0.0
+
+# HTTP Requests
+requests>=2.31.0
+
+# Utilities
+python-dateutil>=2.8.0

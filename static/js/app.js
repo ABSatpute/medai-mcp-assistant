@@ -81,8 +81,13 @@ class MedAI {
         });
 
         this.socket.on('show_map', (data) => {
-            this.showMap(data.stores, data.user_location);
-        });
+            console.log('🗺️ Map data received:', data);
+            console.log('🔍 Calling showInlineChatMap...');
+            try {
+                this.showInlineChatMap(data.stores, data.user_location);
+            } catch (error) {
+                console.error('❌ Error in showInlineChatMap:', error);
+            }
         });
 
         this.socket.on('medicine_results', (data) => {
@@ -446,7 +451,7 @@ class MedAI {
         });
 
         // Set map center to user location
-        this.map.setView([userLocation.latitude, userLocation.longitude], 13);
+        this.map.setView([this.userLocation.latitude, this.userLocation.longitude], 13);
 
         // Add user location marker (always visible)
         const userIcon = L.divIcon({
@@ -455,7 +460,7 @@ class MedAI {
             className: 'user-location-marker'
         });
 
-        this.userMarker = L.marker([userLocation.latitude, userLocation.longitude], {icon: userIcon})
+        this.userMarker = L.marker([this.userLocation.latitude, this.userLocation.longitude], {icon: userIcon})
             .addTo(this.map)
             .bindPopup('<b>📍 Your Location</b>')
             .setZIndexOffset(1000); // Keep user marker on top
@@ -898,6 +903,112 @@ function closeMap() {
     document.getElementById('mapContainer').style.display = 'none';
     document.getElementById('mapOverlay').style.display = 'none';
 }
+
+// Add inline map methods to MedAI class
+MedAI.prototype.showInlineChatMap = function(stores, userLocation) {
+    if (!stores || stores.length === 0) return;
+    
+    // Use class userLocation if WebSocket userLocation is null
+    const location = userLocation || this.userLocation || {latitude: 18.558091, longitude: 73.793439};
+    
+    console.log('🗺️ Showing inline map with location:', location);
+    
+    // Create unique map ID for this message
+    const mapId = 'inline-map-' + Date.now();
+    
+    // Create inline map HTML
+    const mapHtml = `
+        <div class="inline-map-container" style="margin: 10px 0; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden;">
+            <div style="background: #f8fafc; padding: 8px 12px; border-bottom: 1px solid #e2e8f0; font-size: 14px; font-weight: 600;">
+                📍 ${stores.length} Store${stores.length > 1 ? 's' : ''} Found
+            </div>
+            <div id="${mapId}" style="height: 300px; width: 100%;"></div>
+            <div style="padding: 8px 12px; background: #f8fafc; font-size: 12px; color: #64748b;">
+                Click markers for details • <span onclick="medAI.showStoreMap(medAI.lastStores, medAI.lastUserLocation)" style="color: #2563eb; cursor: pointer;">View Full Map</span>
+            </div>
+        </div>
+    `;
+    
+    // Store data for full map access
+    this.lastStores = stores;
+    this.lastUserLocation = location;
+    
+    // Add map to the latest assistant message
+    const messages = document.querySelectorAll('.message.assistant');
+    const latestMessage = messages[messages.length - 1];
+    if (latestMessage) {
+        const messageContent = latestMessage.querySelector('.message-content');
+        if (messageContent) {
+            messageContent.innerHTML += mapHtml;
+            
+            // Initialize the inline map
+            setTimeout(() => {
+                this.initializeInlineMap(mapId, stores, location);
+            }, 100);
+        }
+    }
+};
+
+MedAI.prototype.initializeInlineMap = function(mapId, stores, userLocation) {
+    try {
+        console.log('🗺️ Initializing inline map:', mapId, 'with', stores.length, 'stores');
+        
+        // Use class userLocation if WebSocket userLocation is null (same as popup map)
+        const location = userLocation || this.userLocation || {latitude: 18.558091, longitude: 73.793439};
+        
+        // Initialize map
+        const map = L.map(mapId).setView([location.latitude, location.longitude], 13);
+        
+        // Add tile layer
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+        
+        // Add user location marker
+        const userIcon = L.divIcon({
+            html: '<div style="background: #2563eb; width: 12px; height: 12px; border-radius: 50%; border: 2px solid white; box-shadow: 0 2px 4px rgba(37, 99, 235, 0.4);"></div>',
+            iconSize: [16, 16],
+            className: 'user-location-marker'
+        });
+        
+        L.marker([userLocation.latitude, userLocation.longitude], {icon: userIcon})
+            .addTo(map)
+            .bindPopup('<b>📍 Your Location</b>');
+        
+        // Add store markers
+        stores.forEach((store, index) => {
+            const isNearest = index === 0;
+            const storeName = store.store_name.length > 15 ? 
+                store.store_name.substring(0, 15) + '...' : 
+                store.store_name;
+            
+            const storeIcon = L.divIcon({
+                html: `<div style="background: ${isNearest ? '#10b981' : '#ef4444'}; color: white; padding: 2px 6px; border-radius: 8px; font-size: 10px; font-weight: 600; white-space: nowrap; border: 1px solid white; box-shadow: 0 1px 3px rgba(0,0,0,0.3);">${isNearest ? '🏆' : ''}${storeName}</div>`,
+                iconSize: [60, 20],
+                iconAnchor: [30, 10],
+                className: 'store-marker-inline'
+            });
+            
+            const marker = L.marker([store.latitude, store.longitude], {icon: storeIcon}).addTo(map);
+            
+            // Popup with store details
+            const popupContent = `
+                <div style="min-width: 180px;">
+                    <b>${isNearest ? '🏆 ' : ''}${store.store_name}</b><br>
+                    📍 ${store.address.substring(0, 50)}...<br>
+                    📞 ${store.phone_number}<br>
+                    📏 ${store.distance.toFixed(2)} km away
+                    ${store.medicine_name ? `<br>💊 ${store.medicine_name} - ₹${store.price}` : ''}
+                </div>
+            `;
+            
+            marker.bindPopup(popupContent);
+        });
+        
+    } catch (error) {
+        console.error('Error initializing inline map:', error);
+    }
+};
 
 // Initialize app when DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {

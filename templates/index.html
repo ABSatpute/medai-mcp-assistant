@@ -8,8 +8,10 @@
     <meta http-equiv="Expires" content="0">
     <title>MedAI - Medical Assistant</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <style>
         /* CSS Variables for Consistency */
         :root {
@@ -2572,7 +2574,7 @@
                         <button onclick="closeStorePopup()" style="background: #ff4444; color: white; border: none; border-radius: 50%; width: 30px; height: 30px; cursor: pointer;">✕</button>
                     </div>
                     <div style="background: #f0f9ff; border: 2px solid #0ea5e9; border-radius: 8px; padding: 20px; margin: 10px 0; height: 300px;">
-                        <div id="mapContainer" style="height: 100%; background: #e5e7eb; border-radius: 4px; display: flex; align-items: center; justify-content: center;">
+                        <div id="storeMapContainer" style="height: 100%; background: #e5e7eb; border-radius: 4px; display: flex; align-items: center; justify-content: center;">
                             🗺️ Loading map...
                         </div>
                     </div>
@@ -2583,13 +2585,17 @@
             
             // Load Folium map from backend
             setTimeout(() => {
-                const mapContainer = document.getElementById('mapContainer');
+                const mapContainer = document.getElementById('storeMapContainer');
+                console.log('🗺️ Looking for storeMapContainer:', mapContainer);
                 if (mapContainer) {
+                    console.log('🗺️ Loading iframe map for coordinates:', lat, lon);
                     mapContainer.innerHTML = `
                         <iframe src="/api/map/${lat}/${lon}" style="width: 100%; height: 100%; border: none; border-radius: 4px;"></iframe>
                     `;
+                } else {
+                    console.error('❌ storeMapContainer not found');
                 }
-            }, 100);
+            }, 500); // Increased timeout from 100ms to 500ms
         }
         
         function closeStorePopup() {
@@ -3036,6 +3042,10 @@
                     `;
                 }
                 window.waitingForPopupMap = false;
+            } else if (data.stores && data.stores.length > 0) {
+                // Show inline chat map
+                console.log('🗺️ Adding inline map to chat');
+                addInlineChatMap(data.stores, data.user_location);
             }
         });
         
@@ -3480,6 +3490,60 @@
             document.getElementById('imageInput').value = '';
         }
         
+        // Add inline chat map function
+        function addInlineChatMap(stores, userLocation) {
+            if (!stores || stores.length === 0) return;
+            
+            console.log('🗺️ Creating inline chat map');
+            
+            // Use default location if userLocation is null
+            const location = userLocation || {latitude: 18.558091, longitude: 73.793439};
+            
+            // Create inline map HTML
+            const mapHtml = `
+                <div class="inline-map-container" style="margin: 15px 0 !important; border: 2px solid #059669 !important; border-radius: 8px; overflow: hidden; background: white !important; display: block !important; width: 100% !important; box-shadow: 0 4px 6px rgba(0,0,0,0.1) !important;">
+                    <div style="background: #f8fafc !important; padding: 12px !important; border-bottom: 2px solid #059669 !important; font-size: 16px !important; font-weight: 600 !important; color: #1f2937 !important;">
+                        📍 ${stores.length} Store${stores.length > 1 ? 's' : ''} Found Nearby
+                    </div>
+                    <iframe src="/api/map/${location.latitude}/${location.longitude}" 
+                            style="width: 100% !important; height: 300px !important; border: none !important; display: block !important;">
+                    </iframe>
+                    <div style="padding: 12px !important; background: #f8fafc !important; text-align: center !important; font-size: 14px !important; color: #6b7280 !important;">
+                        Interactive map • <span onclick="document.querySelector('.store-locator-btn').click()" style="color: #059669 !important; cursor: pointer !important; text-decoration: underline !important;">View Full Screen</span>
+                    </div>
+                </div>
+            `;
+            
+            // Add map to the latest assistant message with delay
+            setTimeout(() => {
+                const messages = document.querySelectorAll('.message.assistant');
+                const latestMessage = messages[messages.length - 1];
+                console.log('🎯 Found', messages.length, 'assistant messages, targeting latest');
+                
+                if (latestMessage) {
+                    const messageContent = latestMessage.querySelector('.message-content');
+                    if (messageContent) {
+                        console.log('✅ Adding map to message content');
+                        messageContent.innerHTML += mapHtml;
+                        
+                        // Verify it was added
+                        setTimeout(() => {
+                            const mapCheck = messageContent.querySelector('.inline-map-container');
+                            if (mapCheck) {
+                                console.log('✅ Map HTML confirmed in DOM');
+                            } else {
+                                console.log('❌ Map HTML not found in DOM - might be overwritten');
+                            }
+                        }, 100);
+                    } else {
+                        console.log('❌ No message-content found');
+                    }
+                } else {
+                    console.log('❌ No assistant messages found');
+                }
+            }, 200);
+        }
+        
         // End of JavaScript
     </script>
 
@@ -3544,6 +3608,18 @@
                     </div>
                 </div>
             </div>
+        </div>
+    </div>
+
+    <!-- Map Overlay and Container -->
+    <div id="mapOverlay" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000;">
+        <div id="mapContainer" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 80%; height: 70%; background: white; border-radius: 8px; overflow: hidden;">
+            <div style="position: absolute; top: 10px; right: 10px; z-index: 1001;">
+                <button onclick="document.getElementById('mapOverlay').style.display='none'" style="background: #ef4444; color: white; border: none; border-radius: 4px; padding: 8px 12px; cursor: pointer;">
+                    <i class="fas fa-times"></i> Close
+                </button>
+            </div>
+            <div id="map" style="width: 100%; height: 100%;"></div>
         </div>
     </div>
 

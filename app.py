@@ -63,10 +63,23 @@ except Exception as e:
     print(f"Razorpay initialization failed: {e}")
     razorpay_client = None
 
-# Initialize AWS Polly client
+# Initialize AWS Polly client with .env credentials
 try:
-    polly_client = boto3.client('polly', region_name='us-east-1')
-    print("AWS Polly client initialized successfully")
+    aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
+    aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+    aws_region = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+    
+    if aws_access_key and aws_secret_key:
+        polly_client = boto3.client(
+            'polly',
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key,
+            region_name=aws_region
+        )
+        print("AWS Polly client initialized with .env credentials")
+    else:
+        print("AWS credentials not found in .env, Polly disabled")
+        polly_client = None
 except Exception as e:
     print(f"AWS Polly initialization failed: {e}")
     polly_client = None
@@ -119,6 +132,66 @@ def analyze_prescription_image(image_base64: str) -> dict:
         return json.loads(cleaned)
     except Exception as e:
         return {"medicines": [], "error": f"Analysis failed: {str(e)}"}
+
+# AWS Comprehend Medical Integration for Medicine Extraction
+def extract_medicines_with_aws(query: str) -> list:
+    """
+    Extract medicine names from query using AWS Comprehend Medical.
+    Uses .env credentials for dedicated IAM user.
+    """
+    try:
+        from botocore.exceptions import NoCredentialsError, ClientError
+        
+        # Get AWS credentials from .env
+        aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
+        aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+        aws_region = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
+        
+        if not aws_access_key or not aws_secret_key:
+            print("⚠️ AWS credentials not found in .env")
+            return _fallback_medicine_extraction(query)
+        
+        print(f"🔍 Testing AWS Comprehend Medical with query: '{query}'")
+        
+        # Initialize Comprehend Medical with .env credentials
+        comprehend_medical = boto3.client(
+            'comprehendmedical',
+            aws_access_key_id=aws_access_key,
+            aws_secret_access_key=aws_secret_key,
+            region_name=aws_region
+        )
+        
+        response = comprehend_medical.detect_entities_v2(Text=query)
+        
+        print(f"🔍 AWS Response: {len(response.get('Entities', []))} entities found")
+        
+        medicines = []
+        for entity in response['Entities']:
+            print(f"🔍 Entity: {entity['Text']} | Category: {entity['Category']} | Score: {entity['Score']}")
+            if entity['Category'] == 'MEDICATION' and entity['Score'] > 0.5:  # Lowered from 0.7 to 0.5
+                medicine_name = entity['Text'].strip()
+                if medicine_name and len(medicine_name) > 2:
+                    medicines.append(medicine_name)
+        
+        print(f"🔬 AWS Medical extracted: {medicines} from '{query}'")
+        return medicines if medicines else _fallback_medicine_extraction(query)
+        
+    except (NoCredentialsError, ClientError) as e:
+        print(f"⚠️ AWS Medical error: {e}")
+        return _fallback_medicine_extraction(query)
+    except Exception as e:
+        print(f"⚠️ AWS Medical failed: {e}")
+        return _fallback_medicine_extraction(query)
+
+def _fallback_medicine_extraction(query: str) -> list:
+    """Simple fallback if AWS unavailable"""
+    import re
+    # Extract capitalized words that could be medicine names
+    potential_medicines = re.findall(r'\b[A-Z][a-z]{3,}\b', query)
+    exclude = {'Find', 'Search', 'Medicine', 'Store', 'Near', 'Price'}
+    medicines = [m for m in potential_medicines if m not in exclude]
+    print(f"🔄 Fallback extracted: {medicines}")
+    return medicines
 
 # Cache for medicine names to avoid repeated database calls
 _medicine_cache = None
@@ -297,47 +370,24 @@ async def call_mcp_tool(server_name: str, tool_name: str, arguments: dict):
 # -------------------------------
 async def process_query(query: str, image_base64: str = None, conversation_history: list = None, user_location: dict = None):
     """
-    Advanced decision-making pipeline. This is the canonical production logic.
+    Advanced decision-making pipeline with AWS medicine extraction.
     Returns (assistant_text_response, raw_tool_result_or_none)
     """
     import re
     
-    # Force certain direct actions if query contains explicit phrases
-    if "Find medicines near me" in query or re.search(r"\b(find|search)\b.*\bmedicine(s)?\b", query, re.IGNORECASE) and "near" in query:
-        sql = (
-            "SELECT m.medicine_name, m.price, ms.store_name, ss.stock_quantity "
-            "FROM medicines m "
-            "JOIN store_stock ss ON m.medicine_id = ss.medicine_id "
-            "JOIN medical_stores ms ON ss.store_id = ms.store_id "
-            "WHERE ss.stock_quantity > 0 LIMIT 10"
-        )
-        result = await call_mcp_tool("medical-database", "execute_sql", {"sql_query": sql})
-        format_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-        formatted = format_llm.invoke([HumanMessage(content=f"User asked: '{query}'. Database result: {result}. Provide a helpful response about available medicines.")])
-        return formatted.content, result
-
-    if re.search(r"\b(nearby|near me|nearby stores|pharmacies|store locator|pharmacy)\b", query, re.IGNORECASE):
-        print(f"🗺️ DEBUG - Hardcoded store query triggered for: {query}")
-        args = {"latitude": 18.566039, "longitude": 73.766370, "limit": 5}
-        if user_location:
-            args["latitude"] = user_location.get("latitude", args["latitude"])
-            args["longitude"] = user_location.get("longitude", args["longitude"])
-        print(f"🗺️ DEBUG - Calling map server with args: {args}")
-        result = await call_mcp_tool("medical-map", "get_nearby_stores", args)
-        print(f"🗺️ DEBUG - Map server result: {result}")
-        format_llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-        formatted = format_llm.invoke([HumanMessage(content=f"User asked: '{query}'. Store data: {result}. Provide a helpful response about nearby medical stores.")])
-        return formatted.content, result
-
-    # Build system prompt with strict decision rules (Advanced)
+    # STEP 1: Extract medicines using AWS Comprehend Medical
+    extracted_medicines = extract_medicines_with_aws(query)
+    
+    # STEP 2: Remove hardcoded bypasses - let AI handle all decisions
+    # (Commented out hardcoded logic to let AI decide intelligently)
+    
+    # Build enhanced context with extracted medicines
     context = ""
     if conversation_history:
         recent = conversation_history[-3:] if len(conversation_history) > 3 else conversation_history
-        # Preserve full context for prescription information, truncate others
         context_parts = []
         for m in recent:
             content = m['content']
-            # Keep full content if it contains prescription info
             if "Prescription contains:" in content or "found **" in content:
                 context_parts.append(f"{m['role']}: {content}")
             else:
@@ -346,72 +396,45 @@ async def process_query(query: str, image_base64: str = None, conversation_histo
 
     location_info = f"User Location: {user_location.get('latitude')}, {user_location.get('longitude')}" if user_location else "User location not available"
 
-    system_prompt = f"""You are MedAI, an intelligent medical assistant with advanced contextual understanding.
+    # STEP 3: Enhanced system prompt with intelligent MCP server selection
+    system_prompt = f"""You are MedAI, a medical assistant with access to specialized MCP servers.
 
+EXTRACTED MEDICINES: {extracted_medicines}
 USER LOCATION: {location_info}
 
-=== CONTEXT INTELLIGENCE ===
-PRESCRIPTION AWARENESS:
-- If conversation contains prescription analysis with medicines (look for "found **Medicine1, Medicine2**"), remember them
-- When user asks "my medicines", "my prescription", "what medicines" → Extract from context first
-- Reference previous analysis: "Based on your prescription analysis, your medicines are..."
+MCP SERVER ARCHITECTURE:
+1. medical-database server: execute_sql tool - for medicine data only (prices, names, descriptions)
+2. medical-map server: get_nearby_stores tool - for store locations with coordinates (triggers map display)
 
-CONTEXTUAL REFERENCES:
-- "that medicine", "those medicines", "them" → Use medicines from context
-- "that store", "those stores" → Use stores from context  
-- "availability of that" → Use medicine name from context + execute_sql
-- Always check context before asking user to repeat information
+INTELLIGENT DECISION RULES:
+1. Medicine info only (price, description) → use medical-database server
+2. Store locations + medicine availability → use medical-map server (shows map)
+3. Just store locations → use medical-map server (shows map)
 
-=== TOOLS AVAILABLE ===
-- execute_sql: Query medical database (medicines, prices, stock, stores)
-- get_nearby_stores: Find medical stores with GPS coordinates
+RESPONSE FORMAT - ALWAYS return JSON:
+For database queries: {{"use_tool": true, "tool": "execute_sql", "arguments": {{"sql_query": "SELECT..."}}}}
+For store locations: {{"use_tool": true, "tool": "get_nearby_stores", "arguments": {{"latitude": lat, "longitude": lon}}}}
+For direct answer: {{"use_tool": false, "answer": "Your response here"}}
 
-=== INTELLIGENT DECISION RULES ===
+SMART MCP SELECTION EXAMPLES:
 
-1. PRESCRIPTION CONTEXT QUERIES:
-   - "my medicines", "prescription medicines", "what medicines" → Check context first
-   - If medicines found in context → Direct answer with context medicines
-   - If no context → Ask for clarification
+User: "what is the price of Paracetamol" + Extracted: ['Paracetamol']
+→ {{"use_tool": true, "tool": "execute_sql", "arguments": {{"sql_query": "SELECT medicine_name, price FROM medicines WHERE medicine_name LIKE '%Paracetamol%'"}}}}
 
-2. MEDICINE QUERIES:
-   - "find [medicine]", "availability", "price", "stock" → execute_sql
-   - "availability of that" + context has medicine → execute_sql with context medicine
+User: "is Dolo available" + Extracted: ['Dolo'] 
+→ {{"use_tool": true, "tool": "get_nearby_stores", "arguments": {{"medicine_filter": "Dolo"}}}} (shows stores with Dolo on map)
 
-3. ALTERNATIVE MEDICINE QUERIES:
-   - "alternatives", "similar medicines", "generic versions" → Suggest alternatives using medical knowledge, then ASK PERMISSION
-   - "check availability" (after alternatives suggested) → Check availability of previously suggested alternatives
-   - DO NOT automatically check database - always ask user permission first
+User: "find nearby stores"
+→ {{"use_tool": true, "tool": "get_nearby_stores", "arguments": {{}}}} (shows all stores on map)
 
-4. LOCATION QUERIES:
-   - "nearby stores", "pharmacies", "medical stores", "store locator" → get_nearby_stores
-   - "stores for [medicine]" → execute_sql (include store info)
+User: "where can I buy Paracetamol" + Extracted: ['Paracetamol']
+→ {{"use_tool": true, "tool": "get_nearby_stores", "arguments": {{"medicine_filter": "Paracetamol"}}}} (shows stores with Paracetamol on map)
 
-4. CONTEXTUAL FOLLOW-UPS:
-   - Reference previous conversation naturally
-   - Maintain conversation flow without repetitive questions
+ALWAYS choose the MCP server that best serves the user's intent. If they want locations/availability, use medical-map server for map display.
 
-=== RESPONSE FORMAT ===
-TOOL USAGE: {{"use_tool": true, "tool": "execute_sql", "arguments": {{"sql_query": "SELECT..."}}}}
-DIRECT ANSWER: {{"use_tool": false, "answer": "Based on your prescription, your medicines are: [list]..."}}
+Current context: {context}"""
 
-=== EXAMPLES ===
-Context: "found **Paracetamol 500mg, Ibuprofen 200mg**"
-User: "what medicines in my prescription"
-→ {{"use_tool": false, "answer": "Based on your prescription analysis, your medicines are: Paracetamol 500mg and Ibuprofen 200mg. Would you like me to check availability or find nearby stores?"}}
-
-Context: Previous mention of "Crocin"  
-User: "find availability of that"
-→ {{"use_tool": true, "tool": "execute_sql", "arguments": {{"sql_query": "SELECT m.medicine_name, m.price, ms.store_name, ss.stock_quantity FROM medicines m JOIN store_stock ss ON m.medicine_id = ss.medicine_id JOIN medical_stores ms ON ss.store_id = ms.store_id WHERE m.medicine_name LIKE '%Crocin%' AND ss.stock_quantity > 0"}}}}
-
-User: "suggest alternatives for Remdesivir"
-→ {{"use_tool": false, "answer": "Based on medical knowledge, alternatives to Remdesivir could include:\n• Favipiravir\n• Molnupiravir\n• Paxlovid\n\nWould you like me to check which of these are available in our store?"}}
-
-User: "yes, check availability" (after seeing alternatives)
-→ {{"use_tool": true, "tool": "execute_sql", "arguments": {{"sql_query": "SELECT m.medicine_name, m.price, ms.store_name, ss.stock_quantity FROM medicines m JOIN store_stock ss ON m.medicine_id = ss.medicine_id JOIN medical_stores ms ON ss.store_id = ms.store_id WHERE (m.medicine_name LIKE '%Favipiravir%' OR m.medicine_name LIKE '%Molnupiravir%' OR m.medicine_name LIKE '%Paxlovid%') AND ss.stock_quantity > 0"}}}}
-
-Always end medical responses with: "Always consult your doctor for medical advice."
-"""
-
+    # STEP 4: Let AI make intelligent decisions with extracted medicine context
     llm = ChatOpenAI(model="gpt-4o", temperature=0)
     
     # Build full conversation history for LLM
@@ -433,10 +456,9 @@ Always end medical responses with: "Always consult your doctor for medical advic
     cleaned = _clean_llm_json_response(response.content)
     try:
         decision = json.loads(cleaned)
-        print(f"DEBUG - LLM Decision: {decision}")  # Debug what LLM decided
+        print(f"DEBUG - LLM Decision: {decision}")
     except Exception:
-        # LLM didn't return JSON -> treat as plain answer
-        print(f"DEBUG - LLM returned plain text: {response.content[:100]}...")  # Debug non-JSON response
+        print(f"DEBUG - LLM returned plain text: {response.content[:100]}...")
         return response.content, None
 
     if decision.get("use_tool"):
@@ -453,24 +475,19 @@ Always end medical responses with: "Always consult your doctor for medical advic
 
         result = await call_mcp_tool(server_name, tool_name, arguments)
         
-        # DEBUG: Print what MCP tool returned
         print(f"DEBUG - MCP Tool Result: {result}")
 
         # Extract medicine names from the SQL query for better response formatting
         medicine_names = []
         if "sql_query" in arguments:
             sql = arguments["sql_query"]
-            # Extract medicine names from LIKE clauses or IN clauses
             import re
-            # Try LIKE pattern first
             likes = re.findall(r"LIKE '%([^%]+)%'", sql)
             if likes:
                 medicine_names = likes
             else:
-                # Try IN pattern
                 in_match = re.search(r"IN \(([^)]+)\)", sql)
                 if in_match:
-                    # Extract quoted values
                     quoted_values = re.findall(r"'([^']+)'", in_match.group(1))
                     medicine_names = quoted_values
 
@@ -869,13 +886,26 @@ def stream_response(assistant_response, thread_id, raw_data, user_location, conv
     })
     
     # Handle map data and title generation (same as before)
+    print(f"📡 DEBUG - Checking raw_data for map trigger: {raw_data is not None}")
     if raw_data:
         try:
-            parsed = json.loads(raw_data)
+            print(f"📡 DEBUG - Raw data type: {type(raw_data)}")
+            if isinstance(raw_data, str):
+                parsed = json.loads(raw_data)
+            else:
+                parsed = raw_data
+            
+            print(f"📡 DEBUG - Parsed data type: {type(parsed)}, length: {len(parsed) if isinstance(parsed, list) else 'N/A'}")
+            
             if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict) and "latitude" in parsed[0]:
+                print(f"📡 DEBUG - Emitting show_map with {len(parsed)} stores")
                 emit("show_map", {"stores": parsed, "user_location": user_location})
+            else:
+                print(f"📡 DEBUG - Map conditions not met - list: {isinstance(parsed, list)}, has items: {bool(parsed) if isinstance(parsed, list) else False}, has latitude: {'latitude' in parsed[0] if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict) else False}")
         except Exception as e:
             print(f"📡 DEBUG - Error parsing raw_data: {e}")
+    else:
+        print(f"📡 DEBUG - No raw_data provided")
     
     message_count = len(conversation_history)
     if message_count <= 1 or message_count % 3 == 0:
